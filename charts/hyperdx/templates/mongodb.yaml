@@ -1,0 +1,41 @@
+{{- if .Values.mongodb.enabled }}
+apiVersion: mongodbcommunity.mongodb.com/v1
+kind: MongoDBCommunity
+metadata:
+  name: {{ include "hyperdx.mongodbName" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+spec:
+  members: {{ .Values.mongodb.members }}
+  type: ReplicaSet
+  version: {{ .Values.mongodb.version | quote }}
+  security:
+    authentication:
+      modes: [SCRAM]
+  users:
+    - name: {{ .Values.mongodb.user }}
+      db: {{ .Values.mongodb.database }}
+      passwordSecretRef:
+        name: {{ include "hyperdx.mongodbSecretName" . }}
+        key: mongodb-password
+      roles:
+        - name: readWrite
+          db: {{ .Values.mongodb.database }}
+      scramCredentialsSecretName: {{ include "hyperdx.mongoScramName" . }}
+      connectionStringSecretName: {{ include "hyperdx.mongoConnectionName" . }}
+  statefulSet:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: mongod
+              resources: {{- toYaml .Values.mongodb.resources | nindent 16 }}
+      volumeClaimTemplates:
+        - metadata: {name: data-volume}
+          spec:
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests: {storage: {{ .Values.mongodb.storage.size }}}
+            {{- with .Values.mongodb.storage.storageClassName }}
+            storageClassName: {{ . }}
+            {{- end }}
+{{- end }}

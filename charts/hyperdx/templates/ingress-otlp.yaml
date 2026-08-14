@@ -1,0 +1,23 @@
+{{- if .Values.otlpIngress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "hyperdx.fullname" . }}-otlp
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+  annotations: {{- toYaml (merge .Values.otlpIngress.annotations .Values.commonAnnotations) | nindent 4 }}
+spec:
+  {{- with .Values.otlpIngress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.otlpIngress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ required "otlpIngress.host is required when enabled" .Values.otlpIngress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: {{ include "hyperdx.otelCollectorName" . }}, port: {name: otlp-http}}
+{{- end }}

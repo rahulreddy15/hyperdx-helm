@@ -1,0 +1,29 @@
+# Production baseline for an 8+ vCPU / 32+ GB node. Scale ClickHouse first;
+# RAM matters more than CPU for its caches and query execution.
+hyperdx:
+  replicas: 2
+
+otelCollector:
+  replicas: 2
+  tablesTtl: "720h"
+  resources:
+    requests: {cpu: 1, memory: 2Gi}
+    limits: {memory: 4Gi}
+
+clickhouse:
+  storage: {size: 500Gi}
+  resources:
+    requests: {cpu: 2, memory: 8Gi}
+    limits: {memory: 16Gi}
+  keeper:
+    replicas: 3
+
+mongodb:
+  members: 3
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {memory: 1Gi}
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

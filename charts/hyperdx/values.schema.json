@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "nameOverride": {"type": "string"}, "fullnameOverride": {"type": "string"},
+    "imagePullSecrets": {"type": "array"},
+    "hyperdx": {"type": "object", "required": ["image", "replicas"], "properties": {"replicas": {"type": "integer", "minimum": 1}, "publicUrl": {"type": "string"}, "logLevel": {"type": "string"}, "resources": {"$ref": "#/definitions/resources"}, "image": {"$ref": "#/definitions/image"}}},
+    "otelCollector": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "replicas": {"type": "integer", "minimum": 1}, "enableDatadogReceiver": {"type": "boolean"}, "resources": {"$ref": "#/definitions/resources"}, "image": {"$ref": "#/definitions/image"}}},
+    "auth": {"type": "object", "properties": {"sessionSecret": {"type": "string"}, "apiKey": {"type": "string"}, "existingSecret": {"type": "string"}}},
+    "clickhouse": {"type": "object", "properties": {
+      "enabled": {"type": "boolean"}, "version": {"type": "string"}, "shards": {"type": "integer", "minimum": 1}, "replicas": {"type": "integer", "minimum": 1},
+      "auth": {"$ref": "#/definitions/clickhouseAuth"}, "external": {"$ref": "#/definitions/clickhouseExternal"}, "storage": {"$ref": "#/definitions/storage"}, "resources": {"$ref": "#/definitions/resources"},
+      "keeper": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "replicas": {"type": "integer", "minimum": 1}, "storage": {"$ref": "#/definitions/storage"}, "resources": {"$ref": "#/definitions/resources"}}}
+    }},
+    "mongodb": {"type": "object", "properties": {
+      "enabled": {"type": "boolean"}, "version": {"type": "string"}, "members": {"type": "integer", "minimum": 1}, "database": {"type": "string"}, "user": {"type": "string"}, "password": {"type": "string"}, "existingSecret": {"type": "string"},
+      "external": {"type": "object", "properties": {"connectionStringSecret": {"type": "string"}, "connectionStringSecretKey": {"type": "string"}, "uri": {"type": "string"}}},
+      "rbac": {"type": "object", "required": ["create", "serviceAccountName"], "properties": {"create": {"type": "boolean"}, "serviceAccountName": {"type": "string", "minLength": 1}}},
+      "storage": {"$ref": "#/definitions/storage"}, "resources": {"$ref": "#/definitions/resources"}
+    }},
+    "ingress": {"$ref": "#/definitions/ingress"}, "otlpIngress": {"$ref": "#/definitions/ingress"},
+    "networkPolicy": {"type": "object", "properties": {"enabled": {"type": "boolean"}}}
+  },
+  "definitions": {
+    "image": {"type": "object", "properties": {"repository": {"type": "string"}, "tag": {"type": "string"}, "digest": {"type": "string"}, "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]}}},
+    "storage": {"type": "object", "properties": {"size": {"type": "string", "minLength": 1}, "storageClassName": {"type": "string"}}},
+    "resources": {"type": "object", "properties": {"requests": {"type": "object"}, "limits": {"type": "object"}}},
+    "clickhouseAuth": {"type": "object", "properties": {"collectorUser": {"type": "string"}, "collectorPassword": {"type": "string"}, "appUser": {"type": "string"}, "appPassword": {"type": "string"}, "existingSecret": {"type": "string"}, "existingSecretCollectorPasswordKey": {"type": "string"}, "existingSecretAppPasswordKey": {"type": "string"}}},
+    "clickhouseExternal": {"type": "object", "properties": {"host": {"type": "string"}, "httpPort": {"type": "integer", "minimum": 1, "maximum": 65535}, "nativePort": {"type": "integer", "minimum": 1, "maximum": 65535}, "collectorUser": {"type": "string"}, "collectorPassword": {"type": "string"}, "appUser": {"type": "string"}, "appPassword": {"type": "string"}}},
+    "ingress": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "className": {"type": "string"}, "host": {"type": "string"}, "annotations": {"type": "object"}, "tls": {"type": "array"}}}
+  }
+}

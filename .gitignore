@@ -1,0 +1,29 @@
+# Helm
+charts/**/charts/
+charts/**/Chart.lock
+*.tgz
+
+# Rendered output / local scratch
+rendered/
+*.rendered.yaml
+values.local.yaml
+values.*.local.yaml
+
+# Secrets — never commit
+*.key
+*.pem
+secrets.yaml
+*-secret.yaml
+.env
+.env.*
+!.env.example
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+
+# Tooling
+.DS_Store
+.idea/
+.vscode/
+node_modules/

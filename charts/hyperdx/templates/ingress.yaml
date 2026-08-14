@@ -1,0 +1,23 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "hyperdx.fullname" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+  annotations: {{- toYaml (merge .Values.ingress.annotations .Values.commonAnnotations) | nindent 4 }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ required "ingress.host is required when ingress is enabled" .Values.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service: {name: {{ include "hyperdx.fullname" . }}, port: {name: app}}
+{{- end }}

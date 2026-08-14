@@ -1,0 +1,12 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "hyperdx.fullname" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  # PDB selectors are immutable; upgrading from an older chart requires recreation.
+  selector:
+    matchLabels: {{- include "hyperdx.selectorLabelsApp" . | nindent 6 }}
+{{- end }}

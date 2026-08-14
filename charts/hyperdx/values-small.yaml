@@ -1,0 +1,49 @@
+# Kubernetes schedules on requests and kills on limits. This profile lowers requests
+# aggressively but keeps limits generous: high limits reserve no capacity while idle.
+hyperdx:
+  resources:
+    requests: {cpu: 150m, memory: 384Mi}
+    limits: {memory: 1Gi}
+
+otelCollector:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    # MUST remain above 1.5Gi: the internal memory_limiter sits there. A lower limit
+    # allows a kernel OOM-kill before the collector can apply graceful backpressure.
+    limits: {memory: 2Gi}
+  tablesTtl: "168h" # Seven-day retention reduces disk use at the cost of history.
+
+clickhouse:
+  storage: {size: 10Gi}
+  # A 1Gi request is tight for ClickHouse; large/high-cardinality queries may struggle.
+  resources:
+    requests: {cpu: 250m, memory: 1Gi}
+    limits: {memory: 2Gi}
+  extraSettings:
+    max_server_memory_usage_to_ram_ratio: 0.7
+    mark_cache_size: 268435456 # default is 5Gi — larger than this whole node
+    uncompressed_cache_size: 0
+    max_concurrent_queries: 20
+    # NOTE: do NOT set background_pool_size here. ClickHouse refuses to start (exit 36,
+    # BAD_ARGUMENTS) unless background_pool_size * background_merges_mutations_concurrency_ratio
+    # >= number_of_free_entries_in_pool_to_execute_mutation (default 20). A value of 4
+    # yields 8 and kills the server. It saves threads, not memory — not worth it.
+  # The operator's version-probe Job defaults to a 256Mi limit, which OOMs on arm64 and
+  # small nodes. The probe then fails terminally (backoffLimit: 0) and ClickHouse never
+  # starts, reporting only "Cannot probe replicas".
+  versionProbe:
+    resources:
+      requests: {memory: 512Mi}
+      limits: {memory: 1Gi}
+  keeper:
+    storage: {size: 2Gi}
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {memory: 512Mi}
+
+mongodb:
+  members: 1 # No failover: back up application metadata.
+  storage: {size: 5Gi}
+  resources:
+    requests: {cpu: 150m, memory: 384Mi}
+    limits: {memory: 1Gi}

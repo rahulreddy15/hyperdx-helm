@@ -1,0 +1,24 @@
+{{- if .Values.alerting.externalCronJob.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "hyperdx.fullname" . }}-alerts
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.alerting.externalCronJob.schedule | quote }}
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ include "hyperdx.serviceAccountName" . }}
+          containers:
+            - name: alerts
+              image: {{ include "hyperdx.image" (dict "repository" .Values.hyperdx.image.repository "tag" (default .Chart.AppVersion .Values.hyperdx.image.tag) "digest" .Values.hyperdx.image.digest) }}
+              imagePullPolicy: {{ .Values.hyperdx.image.pullPolicy }}
+              command: [npm, run, alerts:check]
+              env:
+                - {name: MONGO_URI, valueFrom: {secretKeyRef: {name: {{ include "hyperdx.mongoConnectionName" . }}, key: connectionString.standardSrv}}}
+                - {name: DEFAULT_CONNECTIONS, valueFrom: {secretKeyRef: {name: {{ include "hyperdx.fullname" . }}, key: default-connections}}}
+              resources: {{- toYaml .Values.alerting.externalCronJob.resources | nindent 16 }}
+{{- end }}

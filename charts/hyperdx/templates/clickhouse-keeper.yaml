@@ -1,0 +1,24 @@
+{{- if and .Values.clickhouse.enabled .Values.clickhouse.keeper.enabled }}
+apiVersion: clickhouse.com/v1alpha1
+kind: KeeperCluster
+metadata:
+  name: {{ include "hyperdx.keeperName" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.clickhouse.keeper.replicas }}
+  containerTemplate:
+    image:
+      repository: {{ .Values.clickhouse.keeper.image.repository }}
+      tag: {{ .Values.clickhouse.version | quote }}
+    {{- with .Values.clickhouse.keeper.resources }}
+    resources: {{- toYaml . | nindent 6 }}
+    {{- end }}
+  dataVolumeClaimSpec:
+    accessModes: [ReadWriteOnce]
+    resources:
+      requests:
+        storage: {{ .Values.clickhouse.keeper.storage.size }}
+    {{- with .Values.clickhouse.keeper.storage.storageClassName }}
+    storageClassName: {{ . }}
+    {{- end }}
+{{- end }}

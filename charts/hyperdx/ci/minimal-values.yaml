@@ -1,0 +1,12 @@
+clickhouse:
+  enabled: false
+  external:
+    host: clickhouse.example.invalid
+    collectorUser: otelcollector
+    collectorPassword: ci-collector
+    appUser: app
+    appPassword: ci-app
+mongodb:
+  enabled: false
+  external:
+    uri: mongodb://mongo.example.invalid/hyperdx

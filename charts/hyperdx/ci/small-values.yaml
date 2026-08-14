@@ -1,0 +1,18 @@
+# CI rendering profile mirroring ../values-small.yaml.
+hyperdx:
+  resources: {requests: {cpu: 150m, memory: 384Mi}, limits: {memory: 1Gi}}
+otelCollector:
+  resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 2Gi}}
+  tablesTtl: "168h"
+clickhouse:
+  auth: {collectorPassword: ci-collector, appPassword: ci-app}
+  storage: {size: 10Gi}
+  resources: {requests: {cpu: 250m, memory: 1Gi}, limits: {memory: 2Gi}}
+  extraSettings: {max_server_memory_usage_to_ram_ratio: 0.7, mark_cache_size: 268435456, uncompressed_cache_size: 0, max_concurrent_queries: 20, background_pool_size: 4}
+  keeper:
+    storage: {size: 2Gi}
+    resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
+mongodb:
+  members: 1
+  storage: {size: 5Gi}
+  resources: {requests: {cpu: 150m, memory: 384Mi}, limits: {memory: 1Gi}}

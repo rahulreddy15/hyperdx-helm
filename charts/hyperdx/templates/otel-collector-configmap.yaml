@@ -1,0 +1,10 @@
+{{- if and .Values.otelCollector.enabled .Values.otelCollector.customConfig }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hyperdx.otelCollectorName" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+data:
+  custom.yaml: |
+{{ .Values.otelCollector.customConfig | indent 4 }}
+{{- end }}

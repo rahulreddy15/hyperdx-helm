@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hyperdx.fullname" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+  annotations: {{- toYaml .Values.commonAnnotations | nindent 4 }}
+data:
+  HYPERDX_LOG_LEVEL: {{ .Values.hyperdx.logLevel | quote }}

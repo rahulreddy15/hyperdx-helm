@@ -1,0 +1,83 @@
+{{- if .Values.clickhouse.enabled }}
+apiVersion: clickhouse.com/v1alpha1
+kind: ClickHouseCluster
+metadata:
+  name: {{ include "hyperdx.fullname" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.clickhouse.replicas }}
+  shards: {{ .Values.clickhouse.shards }}
+  # Required by the operator, unconditionally — even a single-node, single-replica
+  # ClickHouse that will never replicate anything still needs a KeeperCluster.
+  keeperClusterRef:
+    name: {{ include "hyperdx.keeperName" . }}
+  containerTemplate:
+    image:
+      repository: {{ .Values.clickhouse.image.repository }}
+      tag: {{ .Values.clickhouse.version | quote }}
+    {{- with .Values.clickhouse.resources }}
+    resources: {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- with .Values.clickhouse.versionProbe }}
+  # The operator runs a short-lived Job to detect the ClickHouse version before starting
+  # the cluster. Its default 256Mi limit OOMs on arm64/small nodes, and because the Job
+  # uses backoffLimit: 0 a single failure is terminal — the cluster then reports only
+  # "Cannot probe replicas" and the stale Job must be deleted before it will retry.
+  versionProbeTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: version-probe
+              {{- with .resources }}
+              resources: {{- toYaml . | nindent 16 }}
+              {{- end }}
+  {{- end }}
+  dataVolumeClaimSpec:
+    accessModes: [ReadWriteOnce]
+    resources:
+      requests:
+        storage: {{ .Values.clickhouse.storage.size }}
+    {{- with .Values.clickhouse.storage.storageClassName }}
+    storageClassName: {{ . }}
+    {{- end }}
+  settings:
+    {{- with .Values.clickhouse.extraSettings }}
+    # Server-level tuning. Merged with the operator's default configuration.
+    extraConfig: {{- toYaml . | nindent 6 }}
+    {{- end }}
+    # KNOWN LIMITATION: the official operator has no per-user secretKeyRef (Altinity has
+    # one), so these passwords render into the CR. Restrict RBAC on ClickHouseCluster.
+    # spec.settings.defaultUserPassword can source from a Secret, but only for `default`.
+    #
+    # Grants MUST use the shape `grants.query: [ ... ]` — a single `query` key holding a
+    # LIST. That is how ClickHouse's YAML config expresses repeated <query> XML elements.
+    #
+    # A list of single-key maps (`grants: [{query: A}, {query: B}]`) looks correct, is
+    # what the operator's own examples show, and reaches the config file on disk intact —
+    # but ClickHouse keeps only the FIRST entry when converting YAML to XML. The user is
+    # created and can authenticate while silently holding almost no privileges.
+    #
+    # These users live in read-only users_xml storage, so a SQL GRANT cannot repair them
+    # at runtime ("Cannot update user ... because this storage is readonly").
+    #
+    # `CREATE` alone is NOT sufficient for the collector — it needs CREATE TABLE
+    # explicitly, or it fails on startup with code 497 while creating otel_logs.
+    extraUsersConfig:
+      users:
+        {{ .Values.clickhouse.auth.collectorUser }}:
+          password: {{ include "hyperdx.clickhousePassword" (list . "clickhouse-collector-password" .Values.clickhouse.auth.collectorPassword .Values.clickhouse.auth.existingSecretCollectorPasswordKey) | quote }}
+          grants:
+            query:
+              - {{ printf "GRANT CREATE TABLE, CREATE VIEW, SELECT, INSERT, ALTER, DROP, SHOW ON %s.*" .Values.otelCollector.clickhouseDatabase | quote }}
+              - "GRANT SELECT ON system.*"
+        {{ .Values.clickhouse.auth.appUser }}:
+          password: {{ include "hyperdx.clickhousePassword" (list . "clickhouse-app-password" .Values.clickhouse.auth.appPassword .Values.clickhouse.auth.existingSecretAppPasswordKey) | quote }}
+          grants:
+            query:
+              - "GRANT SHOW ON *.*"
+              - "GRANT SELECT ON system.*"
+              - {{ printf "GRANT SELECT ON %s.*" .Values.otelCollector.clickhouseDatabase | quote }}
+  # Operator-generated Service naming is not a documented contract. It is centralised in
+  # the `hyperdx.clickhouse.host` helper — verify with `kubectl get svc` if it breaks.
+{{- end }}

@@ -1,0 +1,40 @@
+{{- if and .Values.mongodb.enabled .Values.mongodb.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.mongodb.rbac.serviceAccountName }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mongodb-kubernetes-database-pods
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.mongodb.rbac.serviceAccountName }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, patch, update]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.mongodb.rbac.serviceAccountName }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.mongodb.rbac.serviceAccountName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.mongodb.rbac.serviceAccountName }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

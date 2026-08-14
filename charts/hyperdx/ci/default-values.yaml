@@ -1,0 +1,2 @@
+clickhouse:
+  auth: {collectorPassword: ci-collector, appPassword: ci-app}

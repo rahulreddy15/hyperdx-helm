@@ -1,0 +1,78 @@
+{{- if .Values.otelCollector.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hyperdx.otelCollectorName" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.otelCollector.replicas }}
+  selector:
+    matchLabels:
+      {{- include "hyperdx.selectorLabelsCollector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "hyperdx.selectorLabelsCollector" . | nindent 8 }}
+        {{- with .Values.otelCollector.podLabels }}{{ toYaml . | nindent 8 }}{{ end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/otel-collector-configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.otelCollector.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
+    spec:
+      serviceAccountName: {{ include "hyperdx.serviceAccountName" . }}
+      securityContext: {{- toYaml .Values.otelCollector.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: wait-for-clickhouse
+          image: {{ .Values.otelCollector.initImage }}
+          command: [sh, -c]
+          args: [{{ printf "until nc -z %s %v; do sleep 5; done" (include "hyperdx.clickhouse.host" .) (include "hyperdx.clickhouse.httpPort" .) | quote }}]
+          # runAsUser is explicit here: the pod sets runAsNonRoot, and the busybox init
+          # image defaults to root, which fails admission with CreateContainerConfigError.
+          securityContext:
+            runAsUser: 65534
+            runAsGroup: 65534
+            runAsNonRoot: true
+            {{- toYaml .Values.otelCollector.securityContext | nindent 12 }}
+      containers:
+        - name: otel-collector
+          image: {{ include "hyperdx.image" (dict "repository" .Values.otelCollector.image.repository "tag" (default .Chart.AppVersion .Values.otelCollector.image.tag) "digest" .Values.otelCollector.image.digest) }}
+          imagePullPolicy: {{ .Values.otelCollector.image.pullPolicy }}
+          securityContext: {{- toYaml .Values.otelCollector.securityContext | nindent 12 }}
+          ports:
+            - {name: otlp-grpc, containerPort: 4317}
+            - {name: otlp-http, containerPort: 4318}
+            - {name: health, containerPort: 13133}
+            - {name: metrics, containerPort: 8888}
+            - {name: fluentd, containerPort: 24225}
+          env:
+            - {name: CLICKHOUSE_ENDPOINT, value: {{ printf "tcp://%s:%v?dial_timeout=10s" (include "hyperdx.clickhouse.host" .) (include "hyperdx.clickhouse.nativePort" .) | quote }}}
+            - {name: CLICKHOUSE_USER, value: {{ include "hyperdx.clickhouseCollectorUser" . | quote }}}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "hyperdx.clickhouseSecretName" . }}, key: {{ .Values.clickhouse.auth.existingSecretCollectorPasswordKey }}}}
+            - {name: HYPERDX_OTEL_EXPORTER_CLICKHOUSE_DATABASE, value: {{ .Values.otelCollector.clickhouseDatabase | quote }}}
+            - {name: HYPERDX_OTEL_EXPORTER_TABLES_TTL, value: {{ .Values.otelCollector.tablesTtl | quote }}}
+            - {name: HYPERDX_OTEL_EXPORTER_CREATE_LEGACY_SCHEMA, value: {{ .Values.otelCollector.createLegacySchema | quote }}}
+            - {name: HYPERDX_OTEL_EXPORTER_CLICKHOUSE_JSON_ENABLE, value: {{ .Values.otelCollector.jsonSchemaEnabled | quote }}}
+            - {name: OPAMP_SERVER_URL, value: {{ printf "http://%s:%v" (include "hyperdx.fullname" .) .Values.hyperdx.opampPort | quote }}}
+            - {name: HYPERDX_LOG_LEVEL, value: {{ .Values.hyperdx.logLevel | quote }}}
+            {{- if .Values.otelCollector.customConfig }}
+            - {name: CUSTOM_OTELCOL_CONFIG_FILE, value: /etc/otel/custom.yaml}
+            {{- end }}
+            {{- if .Values.otelCollector.enableDatadogReceiver }}
+            - {name: HYPERDX_OTELCOL_ENABLE_DATADOG_RECEIVER, value: "true"}
+            {{- end }}
+          {{- if .Values.otelCollector.customConfig }}
+          volumeMounts: [{name: custom-config, mountPath: /etc/otel/custom.yaml, subPath: custom.yaml}]
+          {{- end }}
+          resources: {{- toYaml .Values.otelCollector.resources | nindent 12 }}
+          livenessProbe: {{- toYaml .Values.otelCollector.livenessProbe | nindent 12 }}
+          readinessProbe: {{- toYaml .Values.otelCollector.readinessProbe | nindent 12 }}
+          startupProbe: {{- toYaml .Values.otelCollector.startupProbe | nindent 12 }}
+      {{- if .Values.otelCollector.customConfig }}
+       volumes: [{name: custom-config, configMap: {name: {{ include "hyperdx.otelCollectorName" . }}}}]
+      {{- end }}
+      nodeSelector: {{- toYaml .Values.otelCollector.nodeSelector | nindent 8 }}
+      tolerations: {{- toYaml .Values.otelCollector.tolerations | nindent 8 }}
+      affinity: {{- toYaml .Values.otelCollector.affinity | nindent 8 }}
+      topologySpreadConstraints: {{- toYaml .Values.otelCollector.topologySpreadConstraints | nindent 8 }}
+{{- end }}

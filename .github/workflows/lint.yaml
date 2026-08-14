@@ -1,0 +1,87 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+
+      - name: helm lint
+        run: helm lint charts/hyperdx
+
+      - name: Render default values
+        run: helm template t charts/hyperdx > /dev/null
+
+      - name: Render every ci/ values file
+        run: |
+          shopt -s nullglob
+          found=0
+          for f in charts/hyperdx/ci/*.yaml; do
+            found=1
+            echo "::group::render $f"
+            helm template t charts/hyperdx -f "$f" > /dev/null
+            echo "::endgroup::"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "No ci/ values files found — expected at least one." >&2
+            exit 1
+          fi
+
+      - name: Render external-backend path
+        run: |
+          helm template t charts/hyperdx \
+            --set clickhouse.enabled=false \
+            --set clickhouse.external.host=ch.example.com \
+            --set mongodb.enabled=false \
+            --set mongodb.external.uri=mongodb://user:pass@mongo.example.com/hyperdx \
+            > /dev/null
+
+      - name: Render ingress + cronjob path
+        run: |
+          helm template t charts/hyperdx \
+            --set hyperdx.publicUrl=https://hdx.example.com \
+            --set ingress.enabled=true \
+            --set ingress.host=hdx.example.com \
+            --set otlpIngress.enabled=true \
+            --set otlpIngress.host=otlp.example.com \
+            --set alerting.externalCronJob.enabled=true \
+            --set podDisruptionBudget.enabled=true \
+            --set networkPolicy.enabled=true \
+            > /dev/null
+
+  kubeconform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
+          tar xf kubeconform.tar.gz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      # Operator CRDs are not in the standard schema set, so they are skipped.
+      # This validates the core Kubernetes objects only.
+      - name: Validate rendered manifests
+        run: |
+          helm template t charts/hyperdx | \
+            kubeconform \
+              -strict \
+              -summary \
+              -kubernetes-version 1.30.0 \
+              -skip ClickHouseCluster,KeeperCluster,MongoDBCommunity

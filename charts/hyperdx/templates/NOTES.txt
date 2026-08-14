@@ -1,0 +1,20 @@
+{{- if and .Values.clickhouse.enabled (not (.Capabilities.APIVersions.Has "clickhouse.com/v1alpha1")) }}
+WARNING: Install the official ClickHouse operator/CRDs before this release.
+{{- end }}
+{{- if and .Values.mongodb.enabled (not (.Capabilities.APIVersions.Has "mongodbcommunity.mongodb.com/v1")) }}
+WARNING: Install MongoDB Controllers for Kubernetes and its CRDs before this release.
+{{- end }}
+HyperDX UI:
+{{- if .Values.ingress.enabled }}
+  https://{{ .Values.ingress.host }}
+{{- else }}
+  kubectl port-forward svc/{{ include "hyperdx.fullname" . }} {{ .Values.hyperdx.service.appPort }}:{{ .Values.hyperdx.service.appPort }}
+{{- end }}
+
+Send OTLP/HTTP to {{ if .Values.otlpIngress.enabled }}https://{{ .Values.otlpIngress.host }}{{ else }}http://{{ include "hyperdx.fullname" . }}-otel-collector:4318{{ end }}.
+{{- if not .Values.hyperdx.publicUrl }}
+WARNING: hyperdx.publicUrl is empty; configure it for externally reachable links.
+{{- end }}
+{{- if not .Values.auth.sessionSecret }}
+WARNING: auth.sessionSecret was auto-generated and retained in the release Secret.
+{{- end }}

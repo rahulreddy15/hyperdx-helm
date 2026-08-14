@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hyperdx.fullname" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.hyperdx.replicas }}
+  # Deployment selectors are immutable; upgrading from an older chart requires recreation.
+  selector:
+    matchLabels: {{- include "hyperdx.selectorLabelsApp" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "hyperdx.selectorLabelsApp" . | nindent 8 }}
+        {{- with .Values.hyperdx.podLabels }}{{ toYaml . | nindent 8 }}{{ end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.hyperdx.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
+    spec:
+      serviceAccountName: {{ include "hyperdx.serviceAccountName" . }}
+      securityContext: {{- toYaml .Values.hyperdx.podSecurityContext | nindent 8 }}
+      imagePullSecrets: {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      initContainers:
+        - name: wait-for-backends
+          image: {{ .Values.hyperdx.initImage }}
+          command: [sh, -c]
+          args:
+            - >-
+              until nc -z {{ include "hyperdx.clickhouse.host" . }} {{ include "hyperdx.clickhouse.httpPort" . }}; do sleep 5; done;
+              {{- if .Values.mongodb.enabled }} until nc -z {{ include "hyperdx.mongo.host" . }} 27017; do sleep 5; done;{{ end }}
+          # runAsUser is explicit here: the pod sets runAsNonRoot, and the busybox init
+          # image defaults to root, which fails admission with CreateContainerConfigError.
+          securityContext:
+            runAsUser: 65534
+            runAsGroup: 65534
+            runAsNonRoot: true
+            {{- toYaml .Values.hyperdx.securityContext | nindent 12 }}
+      containers:
+        - name: hyperdx
+          image: {{ include "hyperdx.image" (dict "repository" .Values.hyperdx.image.repository "tag" (default .Chart.AppVersion .Values.hyperdx.image.tag) "digest" .Values.hyperdx.image.digest) }}
+          imagePullPolicy: {{ .Values.hyperdx.image.pullPolicy }}
+          securityContext: {{- toYaml .Values.hyperdx.securityContext | nindent 12 }}
+          ports:
+            - {name: app, containerPort: {{ .Values.hyperdx.appPort }}}
+            - {name: api, containerPort: {{ .Values.hyperdx.apiPort }}}
+            - {name: opamp, containerPort: {{ .Values.hyperdx.opampPort }}}
+          env:
+            - {name: FRONTEND_URL, value: {{ default (printf "http://%s:%v" (include "hyperdx.fullname" .) .Values.hyperdx.service.appPort) .Values.hyperdx.publicUrl | quote }}}
+            - {name: HYPERDX_APP_URL, value: {{ default (printf "http://%s:%v" (include "hyperdx.fullname" .) .Values.hyperdx.service.appPort) .Values.hyperdx.publicUrl | quote }}}
+            - {name: HYPERDX_API_PORT, value: {{ .Values.hyperdx.apiPort | quote }}}
+            - {name: HYPERDX_APP_PORT, value: {{ .Values.hyperdx.appPort | quote }}}
+            - {name: HYPERDX_LOG_LEVEL, value: {{ .Values.hyperdx.logLevel | quote }}}
+            - {name: OPAMP_PORT, value: {{ .Values.hyperdx.opampPort | quote }}}
+            {{- if .Values.mongodb.enabled }}
+            - name: MONGO_URI
+              valueFrom: {secretKeyRef: {name: {{ include "hyperdx.mongoConnectionName" . }}, key: connectionString.standardSrv}}
+            {{- else if .Values.mongodb.external.connectionStringSecret }}
+            - name: MONGO_URI
+              valueFrom: {secretKeyRef: {name: {{ .Values.mongodb.external.connectionStringSecret }}, key: {{ .Values.mongodb.external.connectionStringSecretKey }}}}
+            {{- else }}
+            - {name: MONGO_URI, value: {{ required "mongodb.external.uri or connectionStringSecret is required when mongodb.enabled=false" .Values.mongodb.external.uri | quote }}}
+            {{- end }}
+            - {name: SERVER_URL, value: {{ printf "http://%s:%v" (include "hyperdx.fullname" .) .Values.hyperdx.service.apiPort | quote }}}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ printf "http://%s:4318" (include "hyperdx.otelCollectorName" .) | quote }}}
+            - {name: OTEL_SERVICE_NAME, value: hdx-oss-app}
+            - {name: USAGE_STATS_ENABLED, value: {{ .Values.hyperdx.usageStatsEnabled | quote }}}
+            - {name: WEBHOOK_HOSTNAME_ALLOWLIST, value: {{ .Values.hyperdx.webhookHostnameAllowlist | quote }}}
+            - name: DEFAULT_CONNECTIONS
+              valueFrom: {secretKeyRef: {name: {{ include "hyperdx.fullname" . }}, key: default-connections}}
+            - name: EXPRESS_SESSION_SECRET
+              valueFrom: {secretKeyRef: {name: {{ include "hyperdx.secretName" . }}, key: express-session-secret}}
+            - name: HYPERDX_API_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "hyperdx.fullname" . }}, key: api-key}}
+            {{- if .Values.alerting.externalCronJob.enabled }}
+            - {name: RUN_SCHEDULED_TASKS_EXTERNALLY, value: "true"}
+            {{- end }}
+            {{- range $name, $value := .Values.hyperdx.env }}
+            - {name: {{ $name }}, value: {{ $value | quote }}}
+            {{- end }}
+          envFrom: {{- toYaml .Values.hyperdx.extraEnvFrom | nindent 12 }}
+          resources: {{- toYaml .Values.hyperdx.resources | nindent 12 }}
+          livenessProbe: {{- toYaml .Values.hyperdx.livenessProbe | nindent 12 }}
+          readinessProbe: {{- toYaml .Values.hyperdx.readinessProbe | nindent 12 }}
+          startupProbe: {{- toYaml .Values.hyperdx.startupProbe | nindent 12 }}
+      nodeSelector: {{- toYaml .Values.hyperdx.nodeSelector | nindent 8 }}
+      tolerations: {{- toYaml .Values.hyperdx.tolerations | nindent 8 }}
+      affinity: {{- toYaml .Values.hyperdx.affinity | nindent 8 }}
+      topologySpreadConstraints: {{- toYaml .Values.hyperdx.topologySpreadConstraints | nindent 8 }}

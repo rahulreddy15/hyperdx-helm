@@ -1,0 +1,166 @@
+# Override generated resource names.
+nameOverride: ""
+fullnameOverride: ""
+imagePullSecrets: []
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automount: true
+
+hyperdx:
+  image:
+    repository: docker.hyperdx.io/hyperdx/hyperdx
+    tag: "" # Defaults to Chart.appVersion.
+    digest: ""
+    pullPolicy: IfNotPresent
+  replicas: 1
+  appPort: 8080
+  apiPort: 8000
+  opampPort: 4320
+  publicUrl: "" # Public URL used by FRONTEND_URL and HYPERDX_APP_URL.
+  logLevel: info
+  usageStatsEnabled: false
+  webhookHostnameAllowlist: ""
+  env: {} # Additional name: value environment variables.
+  extraEnvFrom: []
+  initImage: busybox:1.36
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {memory: 1Gi}
+  podAnnotations: {}
+  podLabels: {}
+  # runAsUser MUST be numeric here. The upstream hyperdx image declares a non-numeric
+  # user (`node`), so with runAsNonRoot alone the kubelet cannot verify it and fails with
+  # CreateContainerConfigError: "image has non-numeric user (node)". 1000 == node.
+  podSecurityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+  securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  livenessProbe: {httpGet: {path: /health, port: api}, initialDelaySeconds: 10, periodSeconds: 10}
+  readinessProbe: {httpGet: {path: /health, port: api}, initialDelaySeconds: 5, periodSeconds: 10}
+  startupProbe: {httpGet: {path: /health, port: api}, periodSeconds: 10, failureThreshold: 60}
+  service:
+    type: ClusterIP
+    appPort: 8080
+    apiPort: 8000
+    annotations: {}
+
+otelCollector:
+  enabled: true
+  image:
+    repository: clickhouse/clickstack-otel-collector
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  replicas: 1
+  createLegacySchema: true # Change only if you understand schema compatibility implications.
+  jsonSchemaEnabled: false
+  clickhouseDatabase: default
+  tablesTtl: "720h"
+  customConfig: "" # Mounted and selected with CUSTOM_OTELCOL_CONFIG_FILE.
+  # DANGER: true opens an UNAUTHENTICATED Datadog receiver. Never expose it to untrusted networks.
+  enableDatadogReceiver: false
+  initImage: busybox:1.36
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {memory: 2Gi} # Must exceed the collector's ~1.5GiB memory_limiter.
+  podAnnotations: {}
+  podLabels: {}
+  # Deliberately NO runAsUser here. The collector image already declares a numeric
+  # non-root user (uid=10001 otel), so runAsNonRoot verifies fine on its own. Forcing a
+  # different uid (e.g. 1000) makes the supervisor's agent crash on config application.
+  podSecurityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+  securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  livenessProbe: {httpGet: {path: /, port: health}, initialDelaySeconds: 10, periodSeconds: 10}
+  readinessProbe: {httpGet: {path: /, port: health}, initialDelaySeconds: 5, periodSeconds: 10}
+  startupProbe: {httpGet: {path: /, port: health}, periodSeconds: 10, failureThreshold: 60}
+  service:
+    type: ClusterIP
+    annotations: {}
+
+clickhouse:
+  enabled: true # Set false and configure external to bring your own.
+  external: {host: "", httpPort: 8123, nativePort: 9000, collectorUser: "", collectorPassword: "", appUser: "", appPassword: ""}
+  image: {repository: clickhouse/clickhouse-server}
+  version: "26.5-alpine" # Schema seeding includes a pre-26.2 compatibility path.
+  shards: 1
+  replicas: 1
+  storage: {size: 50Gi, storageClassName: ""}
+  # Overrides for the operator's version-detection Job. Its default 256Mi limit OOMs on
+  # arm64 and constrained nodes; the Job has backoffLimit: 0 so one failure is terminal
+  # and ClickHouse never starts. Leave empty to use the operator default.
+  versionProbe:
+    resources:
+      requests: {memory: 512Mi}
+      limits: {memory: 1Gi}
+  # Server-level ClickHouse tuning, rendered into spec.settings.extraConfig and merged
+  # with the operator's defaults. Needed below ~2Gi — the stock mark_cache_size is 5Gi.
+  # See docs/sizing.md.
+  extraSettings: {}
+  resources:
+    requests: {cpu: 500m, memory: 2Gi}
+    limits: {memory: 2Gi}
+  keeper:
+    enabled: true # The official operator requires keeperClusterRef.
+    replicas: 1
+    image: {repository: clickhouse/clickhouse-keeper}
+    storage: {size: 10Gi, storageClassName: ""}
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {memory: 1Gi}
+  auth:
+    collectorUser: otelcollector
+    collectorPassword: "" # Required on first install (or use existingSecret).
+    appUser: app
+    appPassword: "" # Required on first install (or use existingSecret).
+    existingSecret: ""
+    existingSecretCollectorPasswordKey: clickhouse-collector-password
+    existingSecretAppPasswordKey: clickhouse-app-password
+
+mongodb:
+  enabled: true
+  external: {connectionStringSecret: "", connectionStringSecretKey: connectionString.standardSrv, uri: ""}
+  version: "8.0.15"
+  members: 3
+  database: hyperdx
+  user: hyperdx
+  password: "" # Generated and retained if empty.
+  existingSecret: ""
+  storage: {size: 20Gi, storageClassName: ""}
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {memory: 1Gi}
+  # MCK requires database pod RBAC in every watched namespace; its operator chart
+  # creates this only in the operator namespace. Set false if an admin provisions it centrally.
+  rbac:
+    create: true
+    serviceAccountName: mongodb-kubernetes-appdb
+
+auth:
+  # Set in production. If empty it is generated once and retained; changing it logs out all users.
+  sessionSecret: ""
+  apiKey: ""
+  existingSecret: ""
+
+alerting:
+  externalCronJob:
+    enabled: false # False runs scheduled alert checks in the HyperDX process.
+    schedule: "*/1 * * * *"
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: 200m, memory: 256Mi}
+
+ingress: {enabled: false, className: "", annotations: {}, host: "", path: /, pathType: Prefix, tls: []}
+# Separate endpoint for external senders. gRPC generally requires LB/ingress-specific annotations.
+otlpIngress: {enabled: false, className: "", annotations: {}, host: "", tls: []}
+podDisruptionBudget: {enabled: false, minAvailable: 1}
+networkPolicy: {enabled: false}
+commonLabels: {}
+commonAnnotations: {}

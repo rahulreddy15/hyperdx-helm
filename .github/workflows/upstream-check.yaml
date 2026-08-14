@@ -1,0 +1,185 @@
+name: upstream-check
+
+# Watches hyperdxio/hyperdx for new releases and reports whether the bump is a safe
+# auto-merge or needs human review.
+#
+# The whole point of this workflow is the schema diff. The collector applies its ClickHouse
+# schema as idempotent `CREATE TABLE IF NOT EXISTS` with no version tracking, so it will
+# never fail loudly on an incompatible change — it just silently leaves existing tables
+# alone. The API migrations under packages/api/migrations/ are versioned and one-way.
+#
+# Empty diff across those paths -> safe. Non-empty -> read it before promoting.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Upstream version to check (default: latest @hyperdx/app release)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  UPSTREAM: hyperdxio/hyperdx
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read current appVersion
+        id: current
+        run: |
+          current=$(grep '^appVersion:' charts/hyperdx/Chart.yaml | awk '{print $2}' | tr -d '"')
+          echo "version=$current" >> "$GITHUB_OUTPUT"
+          echo "Chart appVersion: $current"
+
+      - name: Resolve latest upstream version
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${{ inputs.target_version }}" ]; then
+            latest="${{ inputs.target_version }}"
+          else
+            # Releases are per-package via Changesets, e.g. "@hyperdx/app@2.34.0".
+            # There is no single monorepo version tag, so filter to the app package.
+            latest=$(gh release list --repo "$UPSTREAM" --limit 60 \
+              --json tagName --jq '[.[] | select(.tagName | startswith("@hyperdx/app@")) | .tagName][0]' \
+              | sed 's|@hyperdx/app@||')
+          fi
+          if [ -z "$latest" ]; then
+            echo "Could not resolve an upstream version." >&2
+            exit 1
+          fi
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream: $latest"
+
+      - name: Compare
+        id: compare
+        run: |
+          if [ "${{ steps.current.outputs.version }}" = "${{ steps.latest.outputs.version }}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch upstream at both revisions
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          git clone --filter=blob:none --no-checkout \
+            "https://github.com/$UPSTREAM.git" upstream
+          cd upstream
+          git fetch --tags --quiet
+
+      - name: Diff schema and migration paths
+        if: steps.compare.outputs.changed == 'true'
+        id: schema
+        run: |
+          cd upstream
+          from="@hyperdx/app@${{ steps.current.outputs.version }}"
+          to="@hyperdx/app@${{ steps.latest.outputs.version }}"
+
+          paths="docker/otel-collector/schema/seed packages/api/migrations/ch packages/api/migrations/mongo"
+
+          if ! git rev-parse --verify --quiet "$from^{commit}" > /dev/null; then
+            echo "Tag $from not found upstream — cannot diff. Treating as needs-review." >&2
+            echo "safe=false" >> "$GITHUB_OUTPUT"
+            echo "reason=baseline tag \`$from\` not found upstream" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          diff=$(git diff --stat "$from".."$to" -- $paths || true)
+
+          {
+            echo 'diff<<SCHEMA_EOF'
+            if [ -z "$diff" ]; then echo '(no changes)'; else echo "$diff"; fi
+            echo 'SCHEMA_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+          if [ -z "$diff" ]; then
+            echo "safe=true" >> "$GITHUB_OUTPUT"
+            echo "No schema or migration changes."
+          else
+            echo "safe=false" >> "$GITHUB_OUTPUT"
+            echo "reason=schema or migration files changed" >> "$GITHUB_OUTPUT"
+            echo "$diff"
+          fi
+
+      - name: Resolve image digests
+        if: steps.compare.outputs.changed == 'true'
+        id: digests
+        run: |
+          v="${{ steps.latest.outputs.version }}"
+          app=$(docker buildx imagetools inspect "docker.hyperdx.io/hyperdx/hyperdx:$v" \
+                  --format '{{.Manifest.Digest}}' 2>/dev/null || echo "unresolved")
+          col=$(docker buildx imagetools inspect "clickhouse/clickstack-otel-collector:$v" \
+                  --format '{{.Manifest.Digest}}' 2>/dev/null || echo "unresolved")
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "collector=$col" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update tracking issue
+        if: steps.compare.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          from="${{ steps.current.outputs.version }}"
+          to="${{ steps.latest.outputs.version }}"
+          title="Upstream HyperDX $to available (chart is on $from)"
+
+          if [ "${{ steps.schema.outputs.safe }}" = "true" ]; then
+            verdict="**Safe to bump.** No changes under the schema or migration paths."
+            labels="upstream,safe-bump"
+          else
+            verdict="**Needs review** — ${{ steps.schema.outputs.reason }}."
+            labels="upstream,needs-review"
+          fi
+
+          body=$(cat <<EOF
+          Upstream \`$UPSTREAM\` released \`@hyperdx/app@$to\`. This chart's \`appVersion\` is \`$from\`.
+
+          $verdict
+
+          ### Schema / migration diff
+
+          Paths checked:
+          - \`docker/otel-collector/schema/seed\` — collector-owned, idempotent, does **not** alter existing tables
+          - \`packages/api/migrations/ch\` — versioned, one-way
+          - \`packages/api/migrations/mongo\` — versioned, one-way
+
+          \`\`\`
+          ${{ steps.schema.outputs.diff }}
+          \`\`\`
+
+          ### Image digests
+
+          \`\`\`
+          app:       docker.hyperdx.io/hyperdx/hyperdx:$to
+                     ${{ steps.digests.outputs.app }}
+          collector: clickhouse/clickstack-otel-collector:$to
+                     ${{ steps.digests.outputs.collector }}
+          \`\`\`
+
+          ### To bump
+
+          1. Set \`appVersion: "$to"\` in \`charts/hyperdx/Chart.yaml\`
+          2. Bump the chart \`version\`
+          3. Update pinned digests if used
+          4. Review the full upstream diff: https://github.com/$UPSTREAM/compare/@hyperdx/app@$from...@hyperdx/app@$to
+          EOF
+          )
+
+          existing=$(gh issue list --search "$title in:title" --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label "$labels" || \
+              gh issue create --title "$title" --body "$body"
+          fi

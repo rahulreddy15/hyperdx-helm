@@ -1,0 +1,39 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hyperdx.fullname" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "hyperdx.selectorLabelsApp" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - {port: {{ .Values.hyperdx.appPort }}}
+        - {port: {{ .Values.hyperdx.apiPort }}}
+        - {port: {{ .Values.hyperdx.opampPort }}}
+  egress:
+    - {}
+{{- if .Values.otelCollector.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hyperdx.otelCollectorName" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "hyperdx.selectorLabelsCollector" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - {port: 4317}
+        - {port: 4318}
+        - {port: 13133}
+        - {port: 8888}
+        - {port: 24225}
+  egress:
+    - {}
+{{- end }}
+{{- end }}

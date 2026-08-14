@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hyperdx.fullname" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+  annotations: {{- toYaml (merge .Values.hyperdx.service.annotations .Values.commonAnnotations) | nindent 4 }}
+spec:
+  type: {{ .Values.hyperdx.service.type }}
+  selector: {{- include "hyperdx.selectorLabelsApp" . | nindent 4 }}
+  ports:
+    - {name: app, port: {{ .Values.hyperdx.service.appPort }}, targetPort: app}
+    - {name: api, port: {{ .Values.hyperdx.service.apiPort }}, targetPort: api}
+    - {name: opamp, port: {{ .Values.hyperdx.opampPort }}, targetPort: opamp}

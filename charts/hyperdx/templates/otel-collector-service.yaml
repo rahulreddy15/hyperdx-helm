@@ -1,0 +1,18 @@
+{{- if .Values.otelCollector.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hyperdx.otelCollectorName" . }}
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+  annotations: {{- toYaml (merge .Values.otelCollector.service.annotations .Values.commonAnnotations) | nindent 4 }}
+spec:
+  type: {{ .Values.otelCollector.service.type }}
+  selector:
+    {{- include "hyperdx.selectorLabelsCollector" . | nindent 4 }}
+  ports:
+    - {name: otlp-grpc, port: 4317, targetPort: otlp-grpc}
+    - {name: otlp-http, port: 4318, targetPort: otlp-http}
+    - {name: health, port: 13133, targetPort: health}
+    - {name: metrics, port: 8888, targetPort: metrics}
+    - {name: fluentd, port: 24225, targetPort: fluentd}
+{{- end }}
