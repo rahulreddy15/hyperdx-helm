@@ -117,7 +117,257 @@ logins, but the telemetry survives.
 A `KeeperCluster` is deployed even for a single-node ClickHouse — the official operator
 requires `keeperClusterRef` unconditionally.
 
-## Configuration
+### How the pieces talk
+
+```
+                      ┌──────────────────────────────────────┐
+   browser ──8080──▶  │             hyperdx                  │
+   (UI + login)       │  Next.js UI :8080                    │
+                      │  REST API   :8000                    │
+                      │  OpAMP      :4320                    │
+                      └───┬───────────────┬──────────────┬───┘
+                          │               │              ▲
+              queries via │        reads/ │              │ ① collector polls
+              HTTP :8123  │        writes │              │   for its config
+                          ▼               ▼              │
+                   ┌────────────┐   ┌──────────┐         │
+                   │ ClickHouse │   │ MongoDB  │         │
+                   │ 8123 HTTP  │   │  :27017  │         │
+                   │ 9000 native│   └──────────┘         │
+                   │ 9363 prom  │   users, teams,        │
+                   └─────▲──────┘   API keys, dashboards,│
+                         │          sources, alerts      │
+        ② writes via     │                               │
+        native :9000     │                               │
+                   ┌─────┴────────────────────────────┐  │
+   your apps ──▶   │        otel-collector            │──┘
+                   │  OTLP gRPC   :4317               │
+                   │  OTLP HTTP   :4318               │
+                   │  FluentFwd   :24225              │
+                   │  health      :13133              │
+                   │  self-metrics:8888               │
+                   └──────────────────────────────────┘
+```
+
+Two things about this are worth internalising:
+
+**① The collector pulls its own config.** It opens an OpAMP connection *outbound* to the
+app on 4320 and receives its entire pipeline definition in reply. The app decides which
+receivers exist. This is why telemetry cannot flow before a team exists — see below.
+
+**② Telemetry never passes through the app.** The collector writes straight to ClickHouse
+over the native protocol on 9000. The app only *reads*, over HTTP on 8123, as a different
+user with different grants. So a slow UI never slows ingestion, and an app outage doesn't
+stop data landing.
+
+## Access and authentication
+
+There are two completely separate credentials, and confusing them is the most common
+mistake.
+
+| | Who uses it | Where it lives |
+|---|---|---|
+| **Email + password** | Humans logging into the UI | MongoDB `users` |
+| **Team API key** | Applications sending telemetry | MongoDB `teams.apiKey` |
+
+### Logging in
+
+Open-source HyperDX supports **local email/password only**. SSO/OAuth and SAML are cloud
+and enterprise features — there is no self-hosted OIDC login for the UI.
+
+> The `config.standalone.oidc.yaml` and `config.standalone.auth.yaml` files in the upstream
+> repo are **collector-side** authenticators for standalone deployments. They do not add
+> OIDC login to the UI. Easy to misread.
+
+The first registration bootstraps the team; subsequent registrations are rejected. There is
+no `DISABLE_REGISTRATION` switch, so if the UI is public, block `/register/password` at the
+ingress once you've created your account. Additional users come in through team invites
+(`/join-team?token=...`).
+
+### Sending telemetry
+
+Grab the key from **Team Settings → API Keys**, then send it as a **bare** `authorization`
+header:
+
+```
+authorization: <team-api-key>
+```
+
+**Not** `Bearer <key>`. The collector's bearer-token extension is configured with
+`scheme: ''`, so prefixing it fails. This trips people up constantly.
+
+For an OTel SDK:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://hyperdx-otel-collector:4318
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=<team-api-key>"
+export OTEL_SERVICE_NAME=my-service
+```
+
+Forwarding from an existing collector:
+
+```yaml
+exporters:
+  otlphttp/hyperdx:
+    endpoint: http://hyperdx-otel-collector:4318
+    headers:
+      authorization: ${env:HYPERDX_TEAM_API_KEY}
+    compression: gzip
+```
+
+### `HYPERDX_API_KEY` is not the ingestion key
+
+The chart's `auth.apiKey` / `HYPERDX_API_KEY` env var is for HyperDX's **own** self-
+instrumentation. It is a different thing from the per-team `apiKey` in MongoDB. Putting it
+in your `authorization` header will not work unless your deployment deliberately sets both
+to the same value.
+
+### Turning ingestion auth off
+
+Registration sets `collectorAuthenticationEnforced: true` on the team, which is what makes
+the collector demand a key. It can be disabled on the team document if the collector is
+already protected by network policy and only trusted in-cluster senders reach it. Note the
+setting is read from the *first* team, not per-receiver.
+
+## Telemetry formats accepted by default
+
+| Format | Port | Path | Auth |
+|---|---:|---|---|
+| OTLP gRPC | 4317 | — | Team API key |
+| OTLP HTTP | 4318 | `/v1/logs`, `/v1/traces`, `/v1/metrics` | Team API key |
+| Fluent Forward | 24225 | — | **None** |
+| Prometheus | — | scrape-only | n/a |
+| Datadog | 8126 | Datadog intake | opt-in, see below |
+
+**Fluent Forward is not protected by the team API key.** Upstream has a TODO acknowledging
+this. Fluentd, Fluent Bit, and Docker's fluentd log driver can all write to 24225 with no
+credential, so keep that port on a ClusterIP and covered by NetworkPolicy.
+
+**Prometheus is scrape-only.** The collector scrapes its own metrics on 8888 and ClickHouse
+on 9363. There is no remote-write ingestion endpoint. `ENABLE_PROMQL=true` adds a
+PromQL-compatible query path — it does not turn this into a remote-write receiver.
+
+**Browser / session replay** uses `@hyperdx/browser` over the same OTLP endpoint and the
+same team key. Replay events are OTel logs tagged `rr-web.event`, routed to the
+`hyperdx_sessions` table.
+
+**Datadog** (`otelCollector.enableDatadogReceiver`) is off by default. Current upstream
+authenticates it with `DD-API-KEY` when collector auth is enforced, but it is
+**unauthenticated** when no team key exists. Don't expose it without a deliberate decision.
+
+### Compiled vs enabled
+
+The image ships more receivers than it turns on: `otlp`, `fluentforward`, `prometheus`,
+`datadog`, `filelog`, `hostmetrics`, `dockerstats`, `k8scluster`, `kubeletstats`, `nop`.
+Only OTLP, Fluent Forward, Prometheus and (optionally) Datadog are enabled by the
+app-generated config. The rest need `otelCollector.customConfig`, which replaces the whole
+pipeline definition — you then own it across upgrades.
+
+
+## Load testing
+
+Measured on the **small profile** (`values-small.yaml`, which targets 2 vCPU / 4 GB), on
+minikube with 6 vCPU / 7 GB allocated. Synthetic OTLP log records, ~300 bytes each, sent
+over HTTP with 6 concurrent senders.
+
+### Test 1 — default limits, 3 minutes sustained
+
+| | |
+|---|---|
+| Duration | 180s |
+| Accepted | 57,325 requests |
+| Rejected | 3,310 × HTTP 503 |
+| Records sent | 28,662,500 |
+| **Records in ClickHouse** | **28,662,500 (100%)** |
+| Restarts / OOMKills | 0 / 0 |
+
+Every record the collector accepted was persisted. The 503s are the `memory_limiter`
+applying backpressure at the door — which is the behaviour you want. It refused work it
+couldn't complete instead of accepting and silently dropping.
+
+### Peak usage vs. what the profile requests
+
+This is the actionable part:
+
+| Component | CPU request | CPU peak | Mem request | Mem peak | Mem limit |
+|---|---:|---:|---:|---:|---:|
+| ClickHouse | 250m | **1108m** (4.4×) | 1Gi | **2033Mi** (2×) | 2Gi |
+| collector | 100m | **1119m** (11×) | 256Mi | ~1679Mi (6.5×) | 2Gi |
+| hyperdx | 150m | 2m | 384Mi | 399Mi | 1Gi |
+| MongoDB | 150m | 20m | 384Mi | 259Mi | 1Gi |
+
+Two things fall out of this:
+
+**Requests are wildly below real peak usage.** Kubernetes schedules on requests, so a node
+packed by these numbers will be badly oversubscribed under load. That is deliberate — it's
+what lets the profile fit a small node at idle — but you should know it's a bet on
+burstiness, not headroom.
+
+**ClickHouse peaked at 2033Mi against a 2048Mi limit.** That is 15Mi of margin. On the small
+profile, sustained heavy ingest sits right on the edge of an OOMKill. If you plan to push
+real volume, raise the ClickHouse limit before anything else.
+
+**Peak CPU exceeded the profile's own target.** ClickHouse and the collector together drew
+~2.2 vCPU, more than the 2 vCPU the profile is named for. The test host had spare cores, so
+this was never throttled. On an actual 2-core node it would have been.
+
+### Test 2 — collector starved below its memory limiter
+
+Same load, collector limit lowered to 512Mi (its internal `memory_limiter` sits near
+1.5 GiB):
+
+| | |
+|---|---|
+| Accepted | 17,054 requests |
+| **Failed** | **30,644 (64%)** — 30,572 connection refused |
+| Collector memory | 130Mi → 355Mi → 13Mi |
+| Pod status throughout | `1/1 Running`, **restarts = 0** |
+
+The failure mode is worse than a crash. Kubernetes reported the pod healthy the entire
+time, restart count never moved, and yet nearly two thirds of telemetry was refused at the
+socket. Memory collapsing to 13Mi indicates the collector process died and was restarted
+*inside* the container by its supervisor, so the kubelet never saw it.
+
+We did not fully confirm the internal mechanism — no crash appeared in the supervisor log —
+so treat the cause as unconfirmed. The symptom is reproducible and unambiguous.
+
+**Keep `otelCollector.resources.limits.memory` above 2Gi even on small nodes.** Limits
+aren't reserved, so a high limit costs nothing when idle.
+
+### Caveats — read before quoting these numbers
+
+- **Synthetic data compresses unusually well.** Repeated padding and 50 distinct host values
+  are far friendlier to ClickHouse than real telemetry. Expect lower real-world throughput.
+- **The host had 6 cores.** CPU was never the binding constraint, which will not be true on
+  the 2-core node this profile is named for.
+- Log records only. Traces and metrics have different write patterns.
+- 3 minutes is long enough to expose backpressure, not long enough to expose merge
+  pressure, disk growth, or TTL behaviour.
+
+The honest summary: **the small profile absorbed ~159k records/sec with zero data loss**,
+but it did so by bursting to roughly 4× its CPU request and sitting 15Mi under its
+ClickHouse memory limit. It is a valid dev/homelab profile, not a production one.
+
+### Reproducing
+
+The generator is a small Python script posting OTLP/HTTP with N concurrent workers for a
+fixed duration, run as a pod in-cluster:
+
+```bash
+kubectl run loadgen --rm -i --restart=Never -n <ns> --image=python:3.12-alpine \
+  --overrides='{"spec":{"containers":[{"name":"loadgen","image":"python:3.12-alpine",
+  "command":["python","/s/load.py"],"env":[
+    {"name":"APIKEY","value":"<team-api-key>"},
+    {"name":"BATCH","value":"500"},{"name":"DUR","value":"180"},{"name":"CONC","value":"6"}],
+  "volumeMounts":[{"name":"s","mountPath":"/s"}]}],
+  "volumes":[{"name":"s","configMap":{"name":"loadgen"}}]}}'
+```
+
+Sample resource usage in parallel with `kubectl top pods`, and always compare records sent
+against `SELECT count() FROM default.otel_logs` — accepting a request is not the same as
+persisting it.
+
+
 
 See [`charts/hyperdx/values.yaml`](charts/hyperdx/values.yaml) for the full annotated set.
 The values most people touch:
