@@ -396,6 +396,38 @@ helm install o11y ./charts/hyperdx \
   --set mongodb.external.connectionStringSecret=my-mongo-conn
 ```
 
+#### External MongoDB
+
+Verified end to end: with `mongodb.enabled=false` the chart creates no `MongoDBCommunity`
+CR and none of the MCK ServiceAccount/Role/RoleBinding, so **you do not need the MongoDB
+operator at all** on that path. `mongodb.password` is correctly not required. Dropping the
+in-cluster MongoDB also frees ~384Mi of requests.
+
+```bash
+--set mongodb.enabled=false \
+--set mongodb.external.uri='mongodb://user:pass@host:27017/hyperdx?authSource=hyperdx'
+```
+
+**Get `authSource` right.** It must name the database the user was *created in*, not the
+database you connect to. If you created the user inside `hyperdx`:
+
+```
+?authSource=hyperdx     ✅
+?authSource=admin       ❌ authentication failed
+```
+
+Create it in `admin` instead and the reverse applies. This is the single most likely reason
+a correct-looking URI fails.
+
+Prefer `mongodb.external.connectionStringSecret` over `uri` in production so the password
+stays out of the rendered Deployment.
+
+> **The app's `/health` returns 200 even when MongoDB is completely unreachable.** During
+> testing the pod sat `1/1 Ready` while every request failed with
+> `MongoServerError: AuthenticationFailed`. Do not treat pod readiness as proof the
+> database is connected — check the app logs.
+
+
 ## Upgrading
 
 Two things to know before bumping `appVersion`.

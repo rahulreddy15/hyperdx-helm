@@ -422,6 +422,58 @@ Requests exceed allocatable. Use a smaller profile:
 kubectl describe node | grep -A6 "Allocated resources"
 ```
 
+### ClickHouse crash-loops with `Coordination error: Not authenticated`
+
+```
+Code: 999. Coordination::Exception: Coordination error: Not authenticated,
+path /clickhouse/sessions/zookeeper/... (KEEPER_EXCEPTION)
+```
+
+ClickHouse cannot authenticate to Keeper. Seen when Keeper starts before the operator
+finishes templating the cluster secret — the operator logs
+`version probe is not completed yet, skipping cluster secret templating` during that
+window, so Keeper comes up without the credential ClickHouse later presents.
+
+Restart Keeper, then ClickHouse:
+
+```bash
+kubectl delete pod -n <ns> <release>-keeper-keeper-0-0
+# wait for it to be Running, then
+kubectl delete pod -n <ns> <release>-clickhouse-0-0-0
+```
+
+Intermittent, and it does not always self-heal through CrashLoopBackOff.
+
+### App can't authenticate to external MongoDB
+
+```
+MongoServerError: Authentication failed. (code 18)
+MongooseError: Operation `teams.find()` buffering timed out after 10000ms
+```
+
+Almost always `authSource`. It must name the database the user was **created in**, not the
+one you're connecting to:
+
+```
+mongodb://u:p@host:27017/hyperdx?authSource=hyperdx    # user created in hyperdx
+mongodb://u:p@host:27017/hyperdx?authSource=admin      # user created in admin
+```
+
+Verify the URI independently before blaming the chart:
+
+```bash
+kubectl run mtest --rm -i --restart=Never -n <ns> --image=mongo:8.0 -- \
+  mongosh "<your-uri>" --quiet --eval 'print(db.runCommand({ping:1}).ok)'
+```
+
+Note the app's `/health` endpoint returns **200 even with MongoDB entirely unreachable**,
+so the pod will sit `1/1 Ready` while nothing works. Check app logs, not pod status.
+
+Also confirm the value actually reached the container — `helm get values <release>` and
+`kubectl exec ... -- sh -c 'echo $MONGO_URI'`. A failed `helm install` that hit
+`cannot re-use a name that is still in use` leaves the *previous* release's values in
+place, which looks identical to a chart bug.
+
 ### Nothing appears in the UI
 
 Work through these in order — the first is by far the most common:

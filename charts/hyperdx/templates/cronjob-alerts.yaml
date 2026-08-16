@@ -18,7 +18,15 @@ spec:
               imagePullPolicy: {{ .Values.hyperdx.image.pullPolicy }}
               command: [npm, run, alerts:check]
               env:
-                - {name: MONGO_URI, valueFrom: {secretKeyRef: {name: {{ include "hyperdx.mongoConnectionName" . }}, key: connectionString.standardSrv}}}
+                {{- if .Values.mongodb.enabled }}
+                - name: MONGO_URI
+                  valueFrom: {secretKeyRef: {name: {{ include "hyperdx.mongoConnectionName" . }}, key: connectionString.standardSrv}}
+                {{- else if .Values.mongodb.external.connectionStringSecret }}
+                - name: MONGO_URI
+                  valueFrom: {secretKeyRef: {name: {{ .Values.mongodb.external.connectionStringSecret }}, key: {{ .Values.mongodb.external.connectionStringSecretKey }}}}
+                {{- else }}
+                - {name: MONGO_URI, value: {{ required "mongodb.external.uri or connectionStringSecret is required when mongodb.enabled=false" .Values.mongodb.external.uri | quote }}}
+                {{- end }}
                 - {name: DEFAULT_CONNECTIONS, valueFrom: {secretKeyRef: {name: {{ include "hyperdx.fullname" . }}, key: default-connections}}}
               resources: {{- toYaml .Values.alerting.externalCronJob.resources | nindent 16 }}
 {{- end }}
