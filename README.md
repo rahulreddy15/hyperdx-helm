@@ -266,167 +266,95 @@ pipeline definition — you then own it across upgrades.
 
 ## Load testing
 
-Measured on the **small profile** (`values-small.yaml`, which targets 2 vCPU / 4 GB), on
-minikube with 6 vCPU / 7 GB allocated. Synthetic OTLP log records, ~300 bytes each, sent
-over HTTP with 6 concurrent senders.
+The short version: **the small profile survives real ingest, but with almost no margin, and
+it fails silently when pushed past it.** Details below.
 
-### Test 1 — default limits, 3 minutes sustained
+Tested on `values-small.yaml` (targets 2 vCPU / 4 GB) against synthetic OTLP logs. Numbers
+come from two runs, described further down.
+
+### What to change before pushing real volume
+
+| If you… | Do this | Why |
+|---|---|---|
+| Expect sustained ingest | Raise `clickhouse.resources.limits.memory` above 2Gi | It peaked 15Mi under the 2Gi limit |
+| Run on a genuinely 2-core node | Raise ClickHouse + collector CPU requests | Peak draw was ~2.2 vCPU, above the profile's namesake |
+| Trim collector memory | **Don't go below 2Gi limit** | Below its ~1.5Gi internal limiter it fails silently |
+| Care about ingest health | Alert on ClickHouse row counts, not pod status | Every readiness signal here lied at some point |
+
+### Run 1 — does it hold up?
+
+180s sustained, 6 concurrent senders, ~300-byte records.
 
 | | |
 |---|---|
-| Duration | 180s |
-| Accepted | 57,325 requests |
-| Rejected | 3,310 × HTTP 503 |
 | Records sent | 28,662,500 |
-| **Records in ClickHouse** | **28,662,500 (100%)** |
+| **Records in ClickHouse** | **28,662,500 — zero loss** |
+| Rejected upfront | 3,310 requests × HTTP 503 |
 | Restarts / OOMKills | 0 / 0 |
 
-Every record the collector accepted was persisted. The 503s are the `memory_limiter`
-applying backpressure at the door — which is the behaviour you want. It refused work it
-couldn't complete instead of accepting and silently dropping.
+Yes, it holds up. The 503s are the collector's `memory_limiter` refusing work it couldn't
+finish — backpressure, not data loss. Everything it accepted, it persisted.
 
-### Peak usage vs. what the profile requests
+That works out to ~159k records/sec, but **do not quote that as capacity**. The payload was
+repetitive synthetic text across 50 host values, which ClickHouse compresses far better
+than real telemetry, and the host had 6 cores rather than the 2 the profile is named for.
+Treat it as "this profile does not fall over under load", not as a throughput rating.
 
-This is the actionable part:
+### The margins are the real result
 
 | Component | CPU request | CPU peak | Mem request | Mem peak | Mem limit |
 |---|---:|---:|---:|---:|---:|
-| ClickHouse | 250m | **1108m** (4.4×) | 1Gi | **2033Mi** (2×) | 2Gi |
-| collector | 100m | **1119m** (11×) | 256Mi | ~1679Mi (6.5×) | 2Gi |
+| ClickHouse | 250m | 1108m (4.4×) | 1Gi | **2033Mi** | 2048Mi |
+| collector | 100m | 1119m (11×) | 256Mi | ~1679Mi | 2Gi |
 | hyperdx | 150m | 2m | 384Mi | 399Mi | 1Gi |
 | MongoDB | 150m | 20m | 384Mi | 259Mi | 1Gi |
 
-Two things fall out of this:
+Three things worth absorbing:
 
-**Requests are wildly below real peak usage.** Kubernetes schedules on requests, so a node
-packed by these numbers will be badly oversubscribed under load. That is deliberate — it's
-what lets the profile fit a small node at idle — but you should know it's a bet on
-burstiness, not headroom.
+**ClickHouse came within 15Mi of an OOMKill.** 2033Mi against a 2048Mi limit. That is the
+binding constraint on this profile, and the first thing to raise.
 
-**ClickHouse peaked at 2033Mi against a 2048Mi limit.** That is 15Mi of margin. On the small
-profile, sustained heavy ingest sits right on the edge of an OOMKill. If you plan to push
-real volume, raise the ClickHouse limit before anything else.
+**Peak CPU exceeded the profile's own name.** ClickHouse and the collector together drew
+~2.2 vCPU. Nothing throttled only because the test host had spare cores; on an actual
+2-core node it would have.
 
-**Peak CPU exceeded the profile's own target.** ClickHouse and the collector together drew
-~2.2 vCPU, more than the 2 vCPU the profile is named for. The test host had spare cores, so
-this was never throttled. On an actual 2-core node it would have been.
+**Requests sit far below peak usage — deliberately.** Kubernetes schedules on requests, so
+the profile fits a small node at idle and bursts well beyond it under load. That is a bet
+on burstiness. Pack a node using these numbers and a traffic spike will cause eviction.
 
-### Test 2 — collector starved below its memory limiter
+### Run 2 — what failure looks like
 
-Same load, collector limit lowered to 512Mi (its internal `memory_limiter` sits near
-1.5 GiB):
+Same load, collector limit dropped to 512Mi (below its ~1.5Gi internal limiter):
 
 | | |
 |---|---|
 | Accepted | 17,054 requests |
-| **Failed** | **30,644 (64%)** — 30,572 connection refused |
+| **Failed** | **30,644 (64%)** — mostly connection refused |
 | Collector memory | 130Mi → 355Mi → 13Mi |
 | Pod status throughout | `1/1 Running`, **restarts = 0** |
 
-The failure mode is worse than a crash. Kubernetes reported the pod healthy the entire
-time, restart count never moved, and yet nearly two thirds of telemetry was refused at the
-socket. Memory collapsing to 13Mi indicates the collector process died and was restarted
+This is the part worth remembering. Kubernetes reported the pod perfectly healthy the whole
+time — Ready, no restarts, no events — while two thirds of telemetry was refused at the
+socket. Memory collapsing to 13Mi suggests the collector process died and was restarted
 *inside* the container by its supervisor, so the kubelet never saw it.
 
-We did not fully confirm the internal mechanism — no crash appeared in the supervisor log —
-so treat the cause as unconfirmed. The symptom is reproducible and unambiguous.
+We could not confirm that mechanism (no crash appeared in the supervisor log), so treat the
+cause as unverified. The symptom is reproducible.
 
-**Keep `otelCollector.resources.limits.memory` above 2Gi even on small nodes.** Limits
-aren't reserved, so a high limit costs nothing when idle.
+The lesson generalises: **on this stack, pod readiness is not evidence of working
+ingestion.** The collector's probe checks port 13133, which answers happily with no
+pipeline running. The app's `/health` returns 200 with MongoDB entirely unreachable. Alert
+on data arriving, not on pods being green.
 
-### Caveats — read before quoting these numbers
+### How far to trust this
 
-- **Synthetic data compresses unusually well.** Repeated padding and 50 distinct host values
-  are far friendlier to ClickHouse than real telemetry. Expect lower real-world throughput.
-- **The host had 6 cores.** CPU was never the binding constraint, which will not be true on
-  the 2-core node this profile is named for.
-- Log records only. Traces and metrics have different write patterns.
-- 3 minutes is long enough to expose backpressure, not long enough to expose merge
-  pressure, disk growth, or TTL behaviour.
+- Synthetic, highly compressible payloads — real telemetry will be heavier per byte
+- 6-core host, so CPU was never the true constraint
+- Logs only; traces and metrics write differently
+- 3 minutes — long enough to surface backpressure, too short for merge pressure, disk
+  growth, or TTL behaviour
 
-The honest summary: **the small profile absorbed ~159k records/sec with zero data loss**,
-but it did so by bursting to roughly 4× its CPU request and sitting 15Mi under its
-ClickHouse memory limit. It is a valid dev/homelab profile, not a production one.
-
-### Reproducing
-
-The generator is a small Python script posting OTLP/HTTP with N concurrent workers for a
-fixed duration, run as a pod in-cluster:
-
-```bash
-kubectl run loadgen --rm -i --restart=Never -n <ns> --image=python:3.12-alpine \
-  --overrides='{"spec":{"containers":[{"name":"loadgen","image":"python:3.12-alpine",
-  "command":["python","/s/load.py"],"env":[
-    {"name":"APIKEY","value":"<team-api-key>"},
-    {"name":"BATCH","value":"500"},{"name":"DUR","value":"180"},{"name":"CONC","value":"6"}],
-  "volumeMounts":[{"name":"s","mountPath":"/s"}]}],
-  "volumes":[{"name":"s","configMap":{"name":"loadgen"}}]}}'
-```
-
-Sample resource usage in parallel with `kubectl top pods`, and always compare records sent
-against `SELECT count() FROM default.otel_logs` — accepting a request is not the same as
-persisting it.
-
-
-
-See [`charts/hyperdx/values.yaml`](charts/hyperdx/values.yaml) for the full annotated set.
-The values most people touch:
-
-| Value | Default | Notes |
-|---|---|---|
-| `hyperdx.publicUrl` | `""` | Public URL including scheme. Set this. |
-| `hyperdx.image.tag` | chart `appVersion` | Pin `hyperdx.image.digest` in production |
-| `clickhouse.enabled` | `true` | `false` → use `clickhouse.external.*` |
-| `clickhouse.storage.size` | `50Gi` | Sized by ingest volume × retention |
-| `clickhouse.version` | `26.5-alpine` | Schema behaviour differs below 26.2 |
-| `mongodb.enabled` | `true` | `false` → use `mongodb.external.*` |
-| `mongodb.members` | `3` | `1` is fine for dev, gives no failover |
-| `otelCollector.tablesTtl` | `720h` | Drives ClickHouse storage more than anything else |
-| `auth.sessionSecret` | generated | Never leave unset — upstream falls back to a known dev string |
-| `ingress.enabled` | `false` | UI/API ingress |
-| `otlpIngress.enabled` | `false` | Separate ingress for external telemetry senders |
-
-### Using existing backends
-
-```bash
-helm install o11y ./charts/hyperdx \
-  --set clickhouse.enabled=false \
-  --set clickhouse.external.host=clickhouse.internal \
-  --set mongodb.enabled=false \
-  --set mongodb.external.connectionStringSecret=my-mongo-conn
-```
-
-#### External MongoDB
-
-Verified end to end: with `mongodb.enabled=false` the chart creates no `MongoDBCommunity`
-CR and none of the MCK ServiceAccount/Role/RoleBinding, so **you do not need the MongoDB
-operator at all** on that path. `mongodb.password` is correctly not required. Dropping the
-in-cluster MongoDB also frees ~384Mi of requests.
-
-```bash
---set mongodb.enabled=false \
---set mongodb.external.uri='mongodb://user:pass@host:27017/hyperdx?authSource=hyperdx'
-```
-
-**Get `authSource` right.** It must name the database the user was *created in*, not the
-database you connect to. If you created the user inside `hyperdx`:
-
-```
-?authSource=hyperdx     ✅
-?authSource=admin       ❌ authentication failed
-```
-
-Create it in `admin` instead and the reverse applies. This is the single most likely reason
-a correct-looking URI fails.
-
-Prefer `mongodb.external.connectionStringSecret` over `uri` in production so the password
-stays out of the rendered Deployment.
-
-> **The app's `/health` returns 200 even when MongoDB is completely unreachable.** During
-> testing the pod sat `1/1 Ready` while every request failed with
-> `MongoServerError: AuthenticationFailed`. Do not treat pod readiness as proof the
-> database is connected — check the app logs.
-
+Reproduction steps and the generator script are in [docs/load-testing.md](docs/load-testing.md).
 
 ## Upgrading
 

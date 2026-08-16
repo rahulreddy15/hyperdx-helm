@@ -16,8 +16,10 @@ spec:
             - name: alerts
               image: {{ include "hyperdx.image" (dict "repository" .Values.hyperdx.image.repository "tag" (default .Chart.AppVersion .Values.hyperdx.image.tag) "digest" .Values.hyperdx.image.digest) }}
               imagePullPolicy: {{ .Values.hyperdx.image.pullPolicy }}
-              command: [npm, run, alerts:check]
+              command: [./packages/api/bin/hyperdx, task, check-alerts]
+              workingDir: /app
               env:
+                - {name: RUN_SCHEDULED_TASKS_EXTERNALLY, value: "true"}
                 {{- if .Values.mongodb.enabled }}
                 - name: MONGO_URI
                   valueFrom: {secretKeyRef: {name: {{ include "hyperdx.mongoConnectionName" . }}, key: connectionString.standardSrv}}
