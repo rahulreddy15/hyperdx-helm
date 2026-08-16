@@ -68,6 +68,8 @@ spec:
             - {name: WEBHOOK_HOSTNAME_ALLOWLIST, value: {{ .Values.hyperdx.webhookHostnameAllowlist | quote }}}
             - name: DEFAULT_CONNECTIONS
               valueFrom: {secretKeyRef: {name: {{ include "hyperdx.fullname" . }}, key: default-connections}}
+            - name: DEFAULT_SOURCES
+              valueFrom: {configMapKeyRef: {name: {{ include "hyperdx.fullname" . }}, key: DEFAULT_SOURCES}}
             - name: EXPRESS_SESSION_SECRET
               valueFrom: {secretKeyRef: {name: {{ include "hyperdx.secretName" . }}, key: express-session-secret}}
             - name: HYPERDX_API_KEY

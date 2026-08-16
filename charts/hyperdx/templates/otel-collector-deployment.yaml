@@ -46,6 +46,7 @@ spec:
             - {name: fluentd, containerPort: 24225}
           env:
             - {name: CLICKHOUSE_ENDPOINT, value: {{ printf "tcp://%s:%v?dial_timeout=10s" (include "hyperdx.clickhouse.host" .) (include "hyperdx.clickhouse.nativePort" .) | quote }}}
+            - {name: CLICKHOUSE_PROMETHEUS_METRICS_ENDPOINT, value: {{ default (printf "%s:9363" (include "hyperdx.clickhouse.host" .)) .Values.otelCollector.clickhousePrometheusEndpoint | quote }}}
             - {name: CLICKHOUSE_USER, value: {{ include "hyperdx.clickhouseCollectorUser" . | quote }}}
             - name: CLICKHOUSE_PASSWORD
               valueFrom: {secretKeyRef: {name: {{ include "hyperdx.clickhouseSecretName" . }}, key: {{ .Values.clickhouse.auth.existingSecretCollectorPasswordKey }}}}

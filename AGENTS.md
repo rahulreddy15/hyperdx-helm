@@ -242,6 +242,74 @@ from operator internals, not a documented contract. It is centralised in a `_hel
 helper — if it breaks, fix it in one place, and verify with
 `kubectl get svc -l app.kubernetes.io/managed-by=clickhouse-operator`.
 
+### 11. Telemetry does not flow until a user registers
+
+A freshly installed stack accepts **no** telemetry. The collector starts, reports healthy,
+and never binds 4317/4318.
+
+HyperDX pushes the collector's pipeline config over OpAMP, and in
+`packages/api/src/opamp/controllers/opampController.ts` the OTLP receiver is attached only
+when at least one team has an API key. Teams are created by registration. Before that, the
+delivered pipelines receive from `fluentforward` and `nop` only.
+
+Registration also sets `collectorAuthenticationEnforced: true`, after which OTLP senders
+must pass the team API key in an `authorization` header or get 401.
+
+There is no supported unattended provisioning path. Hands-off GitOps needs a scripted
+`POST /register/password` after install.
+
+### 12. ClickHouse grants must be `grants.query: [...]`
+
+In `extraUsersConfig`, grants must be a single `query` key holding a **list**:
+
+```yaml
+grants:
+  query:
+    - "GRANT ..."
+    - "GRANT ..."
+```
+
+A list of single-key maps (`grants: [{query: A}, {query: B}]`) is what the operator's own
+examples show, and it reaches the config file on disk completely intact — but ClickHouse
+keeps only the **first** entry when converting YAML to XML. The user is created, can
+authenticate, and silently holds almost no privileges.
+
+Unrecoverable at runtime: these users live in read-only `users_xml` storage, so a SQL
+`GRANT` fails with *"Cannot update user ... because this storage is readonly"*.
+
+`CREATE` alone is also insufficient for the collector — it needs `CREATE TABLE` explicitly,
+or it dies on startup with code 497 creating `otel_logs`.
+
+### 13. The two images need different security contexts
+
+Not symmetric. Applying one fix to both breaks the other:
+
+| Image | User | Needs |
+|---|---|---|
+| `hyperdx` | non-numeric `node` | explicit `runAsUser: 1000`, else `runAsNonRoot` can't verify it and admission fails |
+| `otel-collector` | numeric `uid=10001(otel)` | **no** override — forcing 1000 crashes the supervisor's agent on config application |
+
+Init containers (busybox) always need an explicit numeric `runAsUser`.
+
+### 14. The version-probe Job fails terminally
+
+The ClickHouse operator's probe Job uses `backoffLimit: 0`, so one failure is final.
+Raising its memory afterwards is not enough — the stale Job must be deleted before the
+operator retries:
+
+```bash
+kubectl delete job -n <ns> -l clickhouse.com/cluster=<release>
+```
+
+The only symptom is `Cannot probe replicas` with no ClickHouse pod, which never mentions
+the probe.
+
+### 15. A Ready collector does not mean ingestion works
+
+Readiness hits the health-check extension on 13133, which comes up even when no OTLP
+receiver is wired and no pipeline runs. Observed at `1/1 Ready` for over ten minutes while
+dropping every send. Check listening ports, not pod status.
+
 ---
 
 ## Working in this repo

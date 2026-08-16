@@ -6,3 +6,8 @@ metadata:
   annotations: {{- toYaml .Values.commonAnnotations | nindent 4 }}
 data:
   HYPERDX_LOG_LEVEL: {{ .Values.hyperdx.logLevel | quote }}
+  {{- $sources := mustFromJson .Values.hyperdx.defaultSources }}
+  {{- range $source := $sources }}
+  {{- $_ := set $source.from "databaseName" $.Values.otelCollector.clickhouseDatabase }}
+  {{- end }}
+  DEFAULT_SOURCES: {{ $sources | toJson | quote }}

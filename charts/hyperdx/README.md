@@ -26,13 +26,19 @@ helm install hyperdx ./charts/hyperdx --set hyperdx.publicUrl=https://hyperdx.ex
 
 See [`docs/sizing.md`](../../docs/sizing.md) for resource totals, tradeoffs, and tuning guidance.
 
+## First run
+
+OTLP ingestion remains disabled until a user registers. HyperDX only adds the `otlp/hyperdx` receiver to collector pipelines after a team with an API key exists. Once a team exists, `collectorAuthenticationEnforced` is true and OTLP senders must provide that team API key in the `authorization` header.
+
 ## Main values
 
 | Value | Default | Description |
 |---|---:|---|
 | `hyperdx.publicUrl` | `""` | Public UI URL |
 | `hyperdx.replicas` | `1` | HyperDX replicas |
+| `hyperdx.defaultSources` | four built-in sources | JSON used to bootstrap log, trace, metric, and session UI sources; database names follow `otelCollector.clickhouseDatabase` |
 | `otelCollector.enabled` | `true` | Deploy collector |
+| `otelCollector.clickhousePrometheusEndpoint` | `""` | ClickHouse Prometheus target; empty derives `<clickhouse-host>:9363` (no scheme) |
 | `clickhouse.enabled` | `true` | Create ClickHouse/Keeper CRs |
 | `clickhouse.auth.collectorPassword` | required initially | Collector password; alternatively configure `clickhouse.auth.existingSecret` |
 | `clickhouse.auth.appPassword` | required initially | Application password; alternatively configure `clickhouse.auth.existingSecret` |

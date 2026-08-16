@@ -7,8 +7,10 @@ OpenTelemetry, now branded **ClickStack**.
 Stateful backends are **operator-managed**: ClickHouse via the official ClickHouse
 operator, MongoDB via MongoDB Controllers for Kubernetes (MCK).
 
-> **Status: early.** The chart renders and lints, but has not yet been validated against a
-> live cluster. Treat `0.1.x` as a preview.
+> **Status: early but validated.** Verified end to end on a live cluster — a clean-room
+> install brings up all five components, the collector creates its ClickHouse schema, and
+> OTLP data sent to `:4318` is queryable from ClickHouse. Not yet run in production, and
+> only single-node ClickHouse has been exercised. Treat `0.1.x` as a preview.
 
 ## Why this chart
 
@@ -78,6 +80,14 @@ Everything else has a working default. Passwords and the session secret are gene
 first install and preserved across upgrades.
 
 ### Sending telemetry
+
+**Register a user first.** A freshly installed stack accepts no telemetry — the collector
+comes up healthy but does not listen on 4317/4318 at all. HyperDX only wires the OTLP
+receiver into the collector's pipelines once a team with an API key exists, and teams are
+created by registration. See the [runbook](docs/runbook.md) for the headless call.
+
+Once a team exists, OTLP senders must pass that team's API key in an `authorization`
+header, or the collector returns 401.
 
 The collector accepts OTLP on `4317` (gRPC) and `4318` (HTTP). In-cluster:
 

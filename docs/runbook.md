@@ -138,6 +138,75 @@ helm test o11y -n observability
 kubectl port-forward -n observability svc/o11y-hyperdx 8080:8080
 ```
 
+### First run: telemetry does not flow until someone registers
+
+This surprises everyone, so it is worth stating plainly:
+
+> **A freshly installed stack accepts no telemetry.** The collector starts, reports
+> healthy, and does not listen on 4317 or 4318 at all.
+
+HyperDX generates the collector's pipeline configuration and pushes it over OpAMP. In
+`packages/api/src/opamp/controllers/opampController.ts` the OTLP receiver is attached only
+when at least one team has an API key:
+
+```ts
+if (apiKeys && apiKeys.length > 0) {
+  pipelines.traces.receivers.push('otlp/hyperdx');
+  pipelines.metrics.receivers.push('otlp/hyperdx');
+  pipelines['logs/in'].receivers.push('otlp/hyperdx');
+}
+```
+
+Teams are created by user registration. Until then the delivered pipelines receive from
+`fluentforward` and `nop` only, so the OTLP ports are never bound.
+
+Register the first user — through the UI, or headlessly:
+
+```bash
+curl -X POST http://<hyperdx>:8000/register/password \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"...","confirmPassword":"..."}'
+```
+
+Within about a minute the supervisor picks up the new config and 4317/4318 start
+listening. Confirm:
+
+```bash
+kubectl exec -n observability deploy/o11y-hyperdx-otel-collector -- \
+  netstat -ltn | grep -E '4317|4318'
+```
+
+### OTLP requires the team API key
+
+Registration also sets `collectorAuthenticationEnforced: true` on the new team, so every
+OTLP sender must present that key. Unauthenticated sends return **401**.
+
+```bash
+kubectl exec -n observability o11y-hyperdx-mongodb-0 -c mongod -- \
+  mongosh "mongodb://<user>:<pass>@localhost:27017/hyperdx" --quiet \
+  --eval 'db.teams.find({},{apiKey:1}).toArray()'
+```
+
+Send with it in an `authorization` header:
+
+```bash
+curl -X POST http://<collector>:4318/v1/logs \
+  -H 'Content-Type: application/json' \
+  -H 'authorization: <team-api-key>' \
+  -d '{"resourceLogs":[...]}'
+```
+
+There is no supported way to pre-provision a team unattended. If you need fully hands-off
+GitOps bring-up, script the registration call as a post-install step.
+
+### A Ready collector does not mean ingestion works
+
+The readiness probe checks the health-check extension on 13133, which comes up even when no
+OTLP receiver is wired and no pipeline is running. During testing the collector sat at
+`1/1 Ready` for over ten minutes while dropping every attempt to send data.
+
+Check the ports, not the pod status.
+
 ---
 
 ## 3. Credentials
@@ -184,15 +253,27 @@ The chart works under Argo CD, with one hard requirement and two conveniences.
 ### You must externalize secrets
 
 Argo CD renders with `helm template` and **no cluster access**, so Helm's `lookup` function
-always returns nil. The generation helper therefore falls through to `randAlphaNum` on
-*every sync*, which means:
+always returns nil.
 
-- ClickHouse passwords rotate continuously and the collector can't authenticate
-- the session secret rotates and logs out every user
-- the Application is permanently `OutOfSync` on the Secret
+The chart now fails the render outright if ClickHouse credentials are neither supplied nor
+backed by an existing Secret, so you will not silently get rotating passwords. But it does
+mean **you cannot run this chart under Argo CD with generated credentials at all**. You
+must supply them:
 
-Set all three `existingSecret` values and manage them with External Secrets Operator,
-Sealed Secrets, or whatever you already run. This is not optional.
+```yaml
+auth:
+  existingSecret: hyperdx-auth          # key: express-session-secret
+clickhouse:
+  auth:
+    existingSecret: hyperdx-ch          # keys: clickhouse-collector-password,
+                                        #       clickhouse-app-password
+mongodb:
+  existingSecret: hyperdx-mongo         # key: mongodb-password
+```
+
+Manage those with External Secrets Operator, Sealed Secrets, or whatever you already run.
+If a referenced key is missing the render fails with a message naming the Secret and key —
+it will not fall back to a placeholder.
 
 ### Ordering
 
@@ -343,12 +424,34 @@ kubectl describe node | grep -A6 "Allocated resources"
 
 ### Nothing appears in the UI
 
-Check the collector reached ClickHouse and created its schema:
+Work through these in order — the first is by far the most common:
 
-```bash
-kubectl logs -n observability -l app.kubernetes.io/component=otel-collector --tail=50
-kubectl exec -n observability -it <clickhouse-pod> -- clickhouse-client --query "SHOW TABLES"
-```
+1. **Has anyone registered?** No team means no OTLP receiver. Check the collector is
+   actually listening:
+   ```bash
+   kubectl exec -n observability deploy/o11y-hyperdx-otel-collector -- \
+     netstat -ltn | grep -E '4317|4318'
+   ```
+   Nothing listed → see "First run" above. The pod will still report `1/1 Ready`.
+
+2. **Are senders passing the API key?** Unauthenticated OTLP returns 401 once a team
+   exists.
+
+3. **Did the collector create its schema?**
+   ```bash
+   kubectl exec -n observability <clickhouse-pod> -- \
+     clickhouse-client --user <collector-user> --password <pw> --query "SHOW TABLES FROM default"
+   ```
+   Expect `otel_logs`, `otel_traces`, `otel_metrics_*`, `hyperdx_sessions`. Missing tables
+   usually mean a grants problem — check the collector's own log, which the supervisor does
+   **not** forward to pod logs:
+   ```bash
+   kubectl exec -n observability <collector-pod> -- \
+     tail -50 /etc/otel/supervisor-data/agent.log
+   ```
+
+4. **Is data in ClickHouse but not on screen?** Then the problem is UI sources, not
+   ingestion. Confirm `DEFAULT_SOURCES` was applied and points at the right database.
 
 ---
 
@@ -370,6 +473,10 @@ kubectl delete pvc -n observability --all      # destroys all telemetry and meta
 kubectl delete secret o11y-hyperdx -n observability
 ```
 
-**Do not uninstall the operators** unless you are certain nothing else in the cluster uses
-them. Removing the chart takes their CRDs with it, which will delete every
-`ClickHouseCluster` and `MongoDBCommunity` in every namespace.
+**Uninstalling this chart is safe** — it contains no CRDs and has no chart dependencies,
+so it cannot remove anything cluster-scoped.
+
+**Uninstalling `clickstack-operators` is not.** That release owns the CRDs, and removing it
+deletes every `ClickHouseCluster`, `KeeperCluster`, and `MongoDBCommunity` in *every*
+namespace, along with the data behind them. Do not do it unless you are certain nothing
+else in the cluster uses those operators.

@@ -22,6 +22,10 @@ hyperdx:
   logLevel: info
   usageStatsEnabled: false
   webhookHostnameAllowlist: ""
+  # Bootstrap UI sources. Their databaseName fields are rendered from
+  # otelCollector.clickhouseDatabase so source and collector configuration stay aligned.
+  defaultSources: >-
+    [{"from":{"databaseName":"default","tableName":"otel_logs"},"kind":"log","timestampValueExpression":"Timestamp","name":"Logs","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"Body","serviceNameExpression":"ServiceName","bodyExpression":"Body","eventAttributesExpression":"LogAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,SeverityText,Body","severityTextExpression":"SeverityText","traceIdExpression":"TraceId","spanIdExpression":"SpanId","metadataMaterializedViews":{"keyRollupTable":"otel_logs_key_rollup_15m","kvRollupTable":"otel_logs_kv_rollup_15m","granularity":"15 minute"},"connection":"Default","traceSourceId":"Traces","sessionSourceId":"Sessions","metricSourceId":"Metrics"},{"from":{"databaseName":"default","tableName":"otel_traces"},"kind":"trace","timestampValueExpression":"Timestamp","name":"Traces","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"SpanName","serviceNameExpression":"ServiceName","eventAttributesExpression":"SpanAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,StatusCode,round(Duration/1e6),SpanName","traceIdExpression":"TraceId","spanIdExpression":"SpanId","durationExpression":"Duration","durationPrecision":9,"parentSpanIdExpression":"ParentSpanId","spanNameExpression":"SpanName","spanKindExpression":"SpanKind","statusCodeExpression":"StatusCode","statusMessageExpression":"StatusMessage","metadataMaterializedViews":{"keyRollupTable":"otel_traces_key_rollup_15m","kvRollupTable":"otel_traces_kv_rollup_15m","granularity":"15 minute"},"connection":"Default","logSourceId":"Logs","sessionSourceId":"Sessions"},{"from":{"databaseName":"default","tableName":""},"kind":"metric","timestampValueExpression":"TimeUnix","name":"Metrics","resourceAttributesExpression":"ResourceAttributes","metricTables":{"gauge":"otel_metrics_gauge","histogram":"otel_metrics_histogram","sum":"otel_metrics_sum"},"connection":"Default","logSourceId":"Logs","traceSourceId":"Traces","sessionSourceId":"Sessions"},{"from":{"databaseName":"default","tableName":"hyperdx_sessions"},"kind":"session","timestampValueExpression":"TimestampTime","name":"Sessions","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"Body","serviceNameExpression":"ServiceName","bodyExpression":"Body","eventAttributesExpression":"LogAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,SeverityText,Body","severityTextExpression":"SeverityText","traceIdExpression":"TraceId","spanIdExpression":"SpanId","connection":"Default","logSourceId":"Logs","traceSourceId":"Traces","metricSourceId":"Metrics"}]
   env: {} # Additional name: value environment variables.
   extraEnvFrom: []
   initImage: busybox:1.36
@@ -59,6 +63,8 @@ otelCollector:
   createLegacySchema: true # Change only if you understand schema compatibility implications.
   jsonSchemaEnabled: false
   clickhouseDatabase: default
+  # Prometheus scrape target used by the OpAMP config. Empty derives <ClickHouse host>:9363.
+  clickhousePrometheusEndpoint: ""
   tablesTtl: "720h"
   customConfig: "" # Mounted and selected with CUSTOM_OTELCOL_CONFIG_FILE.
   # DANGER: true opens an UNAUTHENTICATED Datadog receiver. Never expose it to untrusted networks.
@@ -79,6 +85,9 @@ otelCollector:
   affinity: {}
   topologySpreadConstraints: []
   livenessProbe: {httpGet: {path: /, port: health}, initialDelaySeconds: 10, periodSeconds: 10}
+  # IMPORTANT: the image's health_check extension has pipeline checking disabled. This
+  # endpoint only proves the collector process is healthy; Ready does not imply that the
+  # OTLP pipelines are configured or that ports 4317/4318 are accepting ingestion.
   readinessProbe: {httpGet: {path: /, port: health}, initialDelaySeconds: 5, periodSeconds: 10}
   startupProbe: {httpGet: {path: /, port: health}, periodSeconds: 10, failureThreshold: 60}
   service:

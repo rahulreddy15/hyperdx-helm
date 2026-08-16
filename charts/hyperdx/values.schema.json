@@ -4,8 +4,8 @@
   "properties": {
     "nameOverride": {"type": "string"}, "fullnameOverride": {"type": "string"},
     "imagePullSecrets": {"type": "array"},
-    "hyperdx": {"type": "object", "required": ["image", "replicas"], "properties": {"replicas": {"type": "integer", "minimum": 1}, "publicUrl": {"type": "string"}, "logLevel": {"type": "string"}, "resources": {"$ref": "#/definitions/resources"}, "image": {"$ref": "#/definitions/image"}}},
-    "otelCollector": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "replicas": {"type": "integer", "minimum": 1}, "enableDatadogReceiver": {"type": "boolean"}, "resources": {"$ref": "#/definitions/resources"}, "image": {"$ref": "#/definitions/image"}}},
+    "hyperdx": {"type": "object", "required": ["image", "replicas"], "properties": {"replicas": {"type": "integer", "minimum": 1}, "publicUrl": {"type": "string"}, "logLevel": {"type": "string"}, "defaultSources": {"type": "string"}, "resources": {"$ref": "#/definitions/resources"}, "image": {"$ref": "#/definitions/image"}}},
+    "otelCollector": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "replicas": {"type": "integer", "minimum": 1}, "enableDatadogReceiver": {"type": "boolean"}, "clickhousePrometheusEndpoint": {"type": "string"}, "resources": {"$ref": "#/definitions/resources"}, "image": {"$ref": "#/definitions/image"}}},
     "auth": {"type": "object", "properties": {"sessionSecret": {"type": "string"}, "apiKey": {"type": "string"}, "existingSecret": {"type": "string"}}},
     "clickhouse": {"type": "object", "properties": {
       "enabled": {"type": "boolean"}, "version": {"type": "string"}, "shards": {"type": "integer", "minimum": 1}, "replicas": {"type": "integer", "minimum": 1},
