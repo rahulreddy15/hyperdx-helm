@@ -15,6 +15,12 @@ Alert on rows arriving in ClickHouse. This is not hypothetical: in load testing,
 undersized collector refused 64% of traffic while Kubernetes reported it `Running`,
 `Ready`, zero restarts, the whole time.
 
+Between "pod Ready" and "rows in ClickHouse" sits one honest signal: the collector's own
+exporter metrics on `:8888/metrics` — `otelcol_exporter_sent_log_records` and the
+`send_failed`/`enqueue_failed` counters. During live failover testing they were exactly
+truthful while everything else was ambiguous ([replication.md](replication.md)). Scrape
+them.
+
 ## What load testing showed
 
 The small profile (2 vCPU / 4 GB target) survived 180 s of sustained synthetic OTLP logs

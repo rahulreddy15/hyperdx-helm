@@ -478,6 +478,20 @@ chart sets the user's `db` to `mongodb.database` precisely so the URI carries th
 auth source. If you overrode it to `admin`, the URI omits `authSource=admin` and Mongoose
 fails.
 
+### Collector pod stuck `0/1`, logs show only "Connected to the OpAMP server" on repeat
+
+The collector is a supervisor that respawns an inner agent; **the agent's errors never
+reach the pod log**, so a crash-looping pipeline looks like an endless stream of
+successful OpAMP connections with `restartCount: 0`. Verified cause: a ClickHouse table
+whose columns don't match what the exporter expects (e.g. a hand-edited or badly
+pre-seeded schema) — the pipeline fails at startup, the pod never passes readiness, and
+a rolling upgrade blocks while the previous pod keeps serving.
+
+Diagnose from the outside: `curl http://<collector-svc>:8888/metrics` and compare
+`otelcol_exporter_sent_log_records` against what you sent, and inspect
+`SELECT name, engine FROM system.tables` / `system.columns` for the target tables.
+Fix the schema and the pod recovers **by itself** within seconds — no restart needed.
+
 ```bash
 kubectl get secret -n observability o11y-hyperdx-mongo-connection \
   -o jsonpath='{.data.connectionString\.standardSrv}' | base64 -d

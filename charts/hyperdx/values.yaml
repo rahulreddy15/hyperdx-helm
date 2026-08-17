@@ -106,6 +106,8 @@ clickhouse:
   # (Replicated `default` database) but the collector's MergeTree tables do not
   # replicate data, so replicas silently diverge behind one Service. Scale vertically,
   # or bring your own replicated ClickHouse via `enabled: false` + `external`.
+  # A tested chart-level path to replication exists (pre-seeded replicated engines) —
+  # see docs/replication.md; sharding additionally needs upstream application changes.
   shards: 1
   replicas: 1
   storage: {size: 50Gi, storageClassName: ""}

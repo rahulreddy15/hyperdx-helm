@@ -400,10 +400,27 @@ A change is not done until every `ci/*.yaml` values file renders cleanly.
   replicate**: `system.replicas` is empty, inserts land only on the replica holding the
   collector's connection, and the same count query through the Service flaps between
   divergent answers per connection. A silently split-brained "HA" that passes health
-  checks. The chart therefore `fail`s on `clickhouse.replicas` or `shards` > 1. Fixing
-  this properly means replicated table engines in the upstream seed schema (plus a
-  Distributed layer for sharding). Until then: scale vertically, or bring your own
-  replicated ClickHouse via `clickhouse.enabled=false`.
+  checks. The chart therefore `fail`s on `clickhouse.replicas` or `shards` > 1.
+  A comprehensive follow-up verification (2026-08-17, five phases on a live cluster —
+  full evidence in `docs/replication.md`) mapped the fix precisely:
+  * **All ClickHouse DDL is collector-authored** (goose, no version tracking, pure
+    `CREATE IF NOT EXISTS` re-applied every start); the app creates zero objects and its
+    CH user has no DDL grants. Pre-created tables therefore win the race — verified: a
+    pre-seeded `ReplicatedMergeTree` schema no-ops the seed, ingests, replicates, syncs
+    full history to later-added replicas, and survives replica kill with zero loss.
+  * **No-arg `ReplicatedMergeTree` only** — the explicit zookeeper-path form is refused
+    inside the operator's `Replicated` database (CH 26.5).
+  * **Sharding fails even with a fully replicated schema** (reads flap between shard
+    contents; writes pin to one shard) — a Distributed layer plus app/collector
+    awareness is upstream work; the guard stays for `shards` unconditionally.
+  * **Wrong pre-seed = loud failure**: the new collector pod crash-loops `0/1` (agent
+    errors invisible in pod logs — only OpAMP connect lines), old pod keeps serving,
+    self-heals when the schema is fixed.
+  * **Testing trap**: OTLP `timeUnixNano` must be 19 digits; past-dated rows are
+    TTL-dropped as whole parts and mimic ingest loss. Check the collector's `:8888`
+    exporter metrics before concluding loss — they were exactly truthful.
+  Until the roadmap feature ships: scale vertically, or bring your own replicated
+  ClickHouse via `clickhouse.enabled=false`.
   This matches the operator's own contract — its scaling guide
   (`docs/guides/scaling.mdx`) states: "To run more than one replica per shard, the data
   must also live in `ReplicatedMergeTree` tables", its database sync "does not move

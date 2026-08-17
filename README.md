@@ -208,6 +208,10 @@ above 1.** Verified on a live cluster: the operator replicates schema across rep
 but the collector's `MergeTree` tables do not replicate *data* — replicas silently
 diverge behind one Service while every pod reports Ready. Scale ClickHouse vertically,
 or point the chart at your own replicated ClickHouse (`clickhouse.enabled=false`).
+A chart-level fix for replication (pre-seeding the schema with replicated engines) has
+been verified end to end — failover, history sync, rolling restarts — and is roadmap
+work; sharding additionally requires upstream changes. Evidence and the tested design:
+[docs/replication.md](docs/replication.md).
 
 ```
                       ┌──────────────────────────────────────┐
@@ -308,6 +312,8 @@ covered in [docs/operations.md](docs/operations.md#security-notes).
 | [docs/runbook.md](docs/runbook.md) | Operator install, first run, credentials, Argo CD, troubleshooting, uninstall |
 | [docs/telemetry.md](docs/telemetry.md) | Formats, ports, auth headers, and the credential model |
 | [docs/operations.md](docs/operations.md) | Alerting, load-test findings, upgrades, backups, security notes |
+| [docs/replication.md](docs/replication.md) | Why ClickHouse scale-out is refused, the live-tested evidence, and the path to replication |
+| [docs/roadmap.md](docs/roadmap.md) | Parked features, upstream watch triggers, prod-readiness queue |
 | [docs/sizing.md](docs/sizing.md) | Profiles, small-node tuning, storage math, the version-probe and memory-limiter traps |
 | [docs/load-testing.md](docs/load-testing.md) | Methodology and reproduction for the load-test numbers |
 | [AGENTS.md](AGENTS.md) | Design decisions, upstream tracking, and the accumulated gotchas — read before contributing |
