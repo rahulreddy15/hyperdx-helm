@@ -131,6 +131,13 @@ clickhouse:
     resources:
       requests: {cpu: 100m, memory: 256Mi}
       limits: {memory: 1Gi}
+  # Optional externally-managed Secret for the operator's INTERNAL cluster credentials
+  # (interserver password, management password, keeper identity) — e.g. sourced from
+  # External Secrets Operator or Vault. Unrelated to the extraUsersConfig user
+  # passwords, which the operator can only take inline. policy=Observe blocks
+  # reconciliation until every required key exists; policy=Manage lets the operator
+  # generate missing keys into the named Secret (bootstrap-friendly).
+  externalSecret: {name: "", policy: Observe}
   auth:
     collectorUser: otelcollector
     collectorPassword: "" # Required on first install (or use existingSecret).
@@ -178,6 +185,8 @@ alerting:
 ingress: {enabled: false, className: "", annotations: {}, host: "", path: /, pathType: Prefix, tls: []}
 # Separate endpoint for external senders. gRPC generally requires LB/ingress-specific annotations.
 otlpIngress: {enabled: false, className: "", annotations: {}, host: "", tls: []}
+# Covers the hyperdx app Deployment only. ClickHouse and Keeper already get
+# operator-managed PDBs (per-shard, and quorum-preserving for Keeper).
 podDisruptionBudget: {enabled: false, minAvailable: 1}
 networkPolicy: {enabled: false}
 commonLabels: {}

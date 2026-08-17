@@ -10,6 +10,7 @@
     "clickhouse": {"type": "object", "properties": {
       "enabled": {"type": "boolean"}, "version": {"type": "string"}, "shards": {"type": "integer", "minimum": 1}, "replicas": {"type": "integer", "minimum": 1},
       "auth": {"$ref": "#/definitions/clickhouseAuth"}, "external": {"$ref": "#/definitions/clickhouseExternal"}, "storage": {"$ref": "#/definitions/storage"}, "resources": {"$ref": "#/definitions/resources"},
+      "externalSecret": {"type": "object", "properties": {"name": {"type": "string"}, "policy": {"enum": ["Observe", "Manage"]}}},
       "keeper": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "replicas": {"type": "integer", "minimum": 1}, "storage": {"$ref": "#/definitions/storage"}, "resources": {"$ref": "#/definitions/resources"}}}
     }},
     "mongodb": {"type": "object", "properties": {

@@ -42,6 +42,7 @@ OTLP ingestion remains disabled until a user registers. HyperDX only adds the `o
 | `clickhouse.enabled` | `true` | Create ClickHouse/Keeper CRs |
 | `clickhouse.auth.collectorPassword` | required initially | Collector password; alternatively configure `clickhouse.auth.existingSecret` |
 | `clickhouse.auth.appPassword` | required initially | Application password; alternatively configure `clickhouse.auth.existingSecret` |
+| `clickhouse.externalSecret.name` | `""` | Externally-managed Secret for the operator's internal cluster credentials (not user passwords); `policy` Observe or Manage |
 | `mongodb.enabled` | `true` | Create MongoDBCommunity CR |
 | `mongodb.rbac.create` | `true` | Create MCK database-pod service accounts and namespace RBAC; disable when centrally provisioned |
 | `auth.sessionSecret` | generated | Session encryption secret |

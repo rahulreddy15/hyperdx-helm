@@ -43,7 +43,9 @@ Four steps. Each has one gotcha, and each gotcha is the thing people trip on.
 
 ### 1. Install the operators (once per cluster)
 
-- Kubernetes >= 1.27, Helm >= 3.13
+- Kubernetes >= 1.28 for the default operator-managed path (the ClickHouse operator
+  chart enforces it); >= 1.27 suffices when both backends are external
+- Helm >= 3.13
 - [ClickHouse operator](https://github.com/ClickHouse/clickhouse-operator) — provides
   `clickhouse.com/v1alpha1`
 - [MongoDB Controllers for Kubernetes](https://github.com/mongodb/mongodb-kubernetes) —
@@ -65,7 +67,13 @@ helm install clickstack-operators clickstack/clickstack-operators \
 > `roleRef`). Get it right now — see the [runbook](docs/runbook.md#1-install-the-operators).
 
 Skipping a backend? Set `clickhouse.enabled=false` or `mongodb.enabled=false`, supply
-connection details, and you don't need that operator at all.
+connection details, and you don't need that operator at all. With an external MongoDB
+you can also skip the bundle and install just the ClickHouse operator standalone:
+
+```bash
+helm install clickhouse-operator oci://ghcr.io/clickhouse/clickhouse-operator-helm \
+  --namespace clickhouse-operator-system --create-namespace
+```
 
 ### 2. Install the chart
 

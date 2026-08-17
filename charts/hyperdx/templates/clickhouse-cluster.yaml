@@ -14,6 +14,13 @@ spec:
   # ClickHouse that will never replicate anything still needs a KeeperCluster.
   keeperClusterRef:
     name: {{ include "hyperdx.keeperName" . }}
+  {{- if .Values.clickhouse.externalSecret.name }}
+  # Sources the operator's internal cluster credentials from a user-managed Secret
+  # (same namespace). This does NOT cover extraUsersConfig user passwords.
+  externalSecret:
+    name: {{ .Values.clickhouse.externalSecret.name }}
+    policy: {{ .Values.clickhouse.externalSecret.policy }}
+  {{- end }}
   containerTemplate:
     image:
       repository: {{ .Values.clickhouse.image.repository }}

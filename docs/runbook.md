@@ -90,6 +90,20 @@ kubectl get deploy mongodb-kubernetes-operator -n clickhouse \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="WATCH_NAMESPACE")].value}'
 ```
 
+### Only need the ClickHouse operator?
+
+If MongoDB is external (`mongodb.enabled=false`), skip the bundle and install the
+ClickHouse operator standalone from its OCI chart:
+
+```bash
+helm install clickhouse-operator oci://ghcr.io/clickhouse/clickhouse-operator-helm \
+  --namespace clickhouse-operator-system --create-namespace
+```
+
+The same registry hosts `clickhouse-cluster-helm`, a CR-only chart — not needed here
+(this chart renders its own `ClickHouseCluster`/`KeeperCluster`), but keep the two
+operator chart versions matched if you ever use both.
+
 ### A note on the MongoDB CRDs
 
 MCK registers several CRDs. **Use only `MongoDBCommunity`** — that is the free path and
@@ -257,6 +271,14 @@ access to that resource can read them. Restrict RBAC on `clickhouseclusters` acc
 `spec.settings.defaultUserPassword` *can* source from a Secret, but only for the `default`
 user, which the chart does not use for the application.
 
+Separately, the operator's **internal** cluster credentials (interserver password,
+management password, keeper identity) live in an operator-created Secret named
+`<cluster>-clickhouse`. To source those from your own secret manager instead (External
+Secrets Operator, Vault), set `clickhouse.externalSecret.name` —
+`policy: Observe` (default) blocks reconciliation until all required keys exist;
+`policy: Manage` lets the operator generate missing keys into your Secret. This does
+not cover the application users above.
+
 ---
 
 ## 4. GitOps / Argo CD
@@ -316,9 +338,15 @@ resource.customizations.health.clickhouse.com_ClickHouseCluster: |
   hs = {}
   hs.status = "Progressing"
   hs.message = "Reconciling"
-  if obj.status ~= nil and obj.status.ready == "True" then
-    hs.status = "Healthy"
-    hs.message = obj.status.status or "Ready"
+  -- Status is a metav1.Conditions array (there is no status.ready scalar).
+  -- Verified live: conditions include Ready/AllShardsReady when converged.
+  if obj.status ~= nil and obj.status.conditions ~= nil then
+    for _, c in ipairs(obj.status.conditions) do
+      if c.type == "Ready" and c.status == "True" then
+        hs.status = "Healthy"
+        hs.message = c.reason or "Ready"
+      end
+    end
   end
   return hs
 
