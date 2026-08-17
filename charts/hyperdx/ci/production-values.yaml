@@ -1,7 +1,10 @@
 # CI rendering profile mirroring ../values-production.yaml.
-hyperdx: {replicas: 2}
+hyperdx:
+  replicas: 2
+  image: {digest: sha256:77f691fea2bd54d1e12520952f5243e23282cfec1e402bf521f2c4e90050b073}
 otelCollector:
   replicas: 2
+  image: {digest: sha256:046d88ecfde94076c6bd2835b82deaafc37036c665be5232b6eb88394a8d0a50}
   tablesTtl: "720h"
   resources: {requests: {cpu: 1, memory: 2Gi}, limits: {memory: 4Gi}}
 clickhouse:
