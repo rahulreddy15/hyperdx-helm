@@ -12,10 +12,14 @@ spec:
         spec:
           restartPolicy: OnFailure
           serviceAccountName: {{ include "hyperdx.serviceAccountName" . }}
+          # Same image as the app, so the same context applies: the image user `node`
+          # is non-numeric and needs an explicit runAsUser (see values.yaml).
+          securityContext: {{- toYaml .Values.hyperdx.podSecurityContext | nindent 12 }}
           containers:
             - name: alerts
               image: {{ include "hyperdx.image" (dict "repository" .Values.hyperdx.image.repository "tag" (default .Chart.AppVersion .Values.hyperdx.image.tag) "digest" .Values.hyperdx.image.digest) }}
               imagePullPolicy: {{ .Values.hyperdx.image.pullPolicy }}
+              securityContext: {{- toYaml .Values.hyperdx.securityContext | nindent 16 }}
               command: [./packages/api/bin/hyperdx, task, check-alerts]
               workingDir: /app
               env:

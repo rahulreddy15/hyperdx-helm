@@ -20,7 +20,19 @@
       "storage": {"$ref": "#/definitions/storage"}, "resources": {"$ref": "#/definitions/resources"}
     }},
     "ingress": {"$ref": "#/definitions/ingress"}, "otlpIngress": {"$ref": "#/definitions/ingress"},
-    "networkPolicy": {"type": "object", "properties": {"enabled": {"type": "boolean"}}}
+    "bootstrap": {"type": "object", "properties": {
+      "register": {"type": "object", "properties": {
+        "enabled": {"type": "boolean"}, "email": {"type": "string"},
+        "existingSecret": {"type": "string"}, "existingSecretPasswordKey": {"type": "string", "minLength": 1},
+        "image": {"type": "string", "minLength": 1}
+      }}
+    }},
+    "networkPolicy": {"type": "object", "properties": {
+      "enabled": {"type": "boolean"},
+      "appIngressFrom": {"type": "array", "items": {"type": "object"}},
+      "telemetryIngressFrom": {"type": "array", "items": {"type": "object"}},
+      "fluentdIngressFrom": {"type": "array", "items": {"type": "object"}}
+    }}
   },
   "definitions": {
     "image": {"type": "object", "properties": {"repository": {"type": "string"}, "tag": {"type": "string"}, "digest": {"type": "string"}, "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]}}},

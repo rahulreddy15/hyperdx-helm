@@ -1,0 +1,61 @@
+{{- if .Values.bootstrap.register.enabled }}
+{{- $email := required "bootstrap.register.email is required when bootstrap.register.enabled" .Values.bootstrap.register.email }}
+{{- $secret := required "bootstrap.register.existingSecret is required when bootstrap.register.enabled (the password is never accepted as a plain value)" .Values.bootstrap.register.existingSecret }}
+# Registers the first user headlessly after install/upgrade. Registration creates the
+# team whose API key gates all telemetry ingestion — until it runs, the collector
+# accepts nothing (see the README's registration gate). 409 = team already exists,
+# which counts as success, so upgrades re-run this harmlessly.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "hyperdx.fullname" . }}-register
+  labels: {{- include "hyperdx.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        {{- include "hyperdx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: bootstrap
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "hyperdx.serviceAccountName" . }}
+      containers:
+        - name: register
+          image: {{ .Values.bootstrap.register.image }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          env:
+            - {name: HDX_EMAIL, value: {{ $email | quote }}}
+            - name: HDX_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: {{ .Values.bootstrap.register.existingSecretPasswordKey }}
+          command: [sh, -ec]
+          args:
+            - |
+              api="http://{{ include "hyperdx.fullname" . }}:{{ .Values.hyperdx.service.apiPort }}"
+              until curl -sf "$api/health" > /dev/null; do echo "waiting for API..."; sleep 5; done
+              body=$(printf '{"email":"%s","password":"%s","confirmPassword":"%s"}' \
+                "$HDX_EMAIL" "$HDX_PASSWORD" "$HDX_PASSWORD")
+              code=$(curl -s -o /tmp/resp -w '%{http_code}' -X POST "$api/register/password" \
+                -H 'Content-Type: application/json' -d "$body")
+              case "$code" in
+                2*)  echo "registered $HDX_EMAIL" ;;
+                409) echo "team already exists; nothing to do" ;;
+                *)   echo "registration failed with HTTP $code:"; cat /tmp/resp; echo; exit 1 ;;
+              esac
+{{- end }}

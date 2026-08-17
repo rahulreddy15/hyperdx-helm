@@ -13,3 +13,14 @@ spec:
       image: busybox:1.36
       command: [wget]
       args: [{{ printf "http://%s:%v/health" (include "hyperdx.fullname" .) .Values.hyperdx.service.apiPort | quote }}]
+      # busybox defaults to root; restricted-PSS namespaces reject that.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        allowPrivilegeEscalation: false
+        capabilities: {drop: [ALL]}
+        seccompProfile: {type: RuntimeDefault}
+      resources:
+        requests: {cpu: 10m, memory: 16Mi}
+        limits: {memory: 64Mi}

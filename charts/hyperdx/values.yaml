@@ -182,12 +182,43 @@ alerting:
       requests: {cpu: 100m, memory: 128Mi}
       limits: {cpu: 200m, memory: 256Mi}
 
+# Optional unattended provisioning. When enabled, a post-install/post-upgrade hook Job
+# registers the first user headlessly (POST /register/password), which creates the team
+# whose API key gates all telemetry ingestion — no manual UI step, GitOps-friendly.
+# A 409 (team already exists) counts as success, so re-runs and upgrades are safe.
+bootstrap:
+  register:
+    enabled: false
+    email: ""
+    # The account password is read from this Secret; it is never accepted as a plain
+    # value. Must satisfy upstream password validation, and must not contain double
+    # quotes or backslashes (it is embedded in a JSON body by a shell script).
+    existingSecret: ""
+    existingSecretPasswordKey: password
+    image: curlimages/curl:8.10.1
+
 ingress: {enabled: false, className: "", annotations: {}, host: "", path: /, pathType: Prefix, tls: []}
 # Separate endpoint for external senders. gRPC generally requires LB/ingress-specific annotations.
 otlpIngress: {enabled: false, className: "", annotations: {}, host: "", tls: []}
 # Covers the hyperdx app Deployment only. ClickHouse and Keeper already get
 # operator-managed PDBs (per-shard, and quorum-preserving for Keeper).
 podDisruptionBudget: {enabled: false, minAvailable: 1}
-networkPolicy: {enabled: false}
+networkPolicy:
+  enabled: false
+  # Each *IngressFrom list holds standard NetworkPolicyPeer objects
+  # (podSelector / namespaceSelector / ipBlock). Egress stays open — restricting it
+  # safely would require modeling DNS, ClickHouse, MongoDB, and alert webhooks.
+  #
+  # Peers allowed to reach the UI and API ports. Empty = any source. The OpAMP port is
+  # separate: it admits only this release's collector pods (or any source when
+  # otelCollector.enabled=false, for externally-run collectors).
+  appIngressFrom: []
+  # Peers allowed to send telemetry: OTLP 4317/4318, plus Datadog 8126 when enabled.
+  # Empty = any source. This release's own app pods are always admitted — the app
+  # sends its self-instrumentation over OTLP.
+  telemetryIngressFrom: []
+  # Peers allowed to reach the UNAUTHENTICATED Fluent Forward port 24225.
+  # Empty DENIES the port entirely (deliberate: it accepts writes with no credential).
+  fluentdIngressFrom: []
 commonLabels: {}
 commonAnnotations: {}

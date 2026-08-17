@@ -18,9 +18,10 @@ covers rendering mechanics and invariants.
 | `templates/hyperdx-service.yaml` | HyperDX app/API/OpAMP `Service` | None |
 | `templates/ingress-otlp.yaml` | OTLP/HTTP `Ingress` | `otlpIngress.enabled` (`ingress-otlp.yaml:1`) |
 | `templates/ingress.yaml` | HyperDX UI `Ingress` | `ingress.enabled` (`ingress.yaml:1`) |
+| `templates/job-bootstrap.yaml` | Post-install/post-upgrade hook `Job` registering the first user | `bootstrap.register.enabled`; requires `email` and `existingSecret` (`job-bootstrap.yaml:1-3`) |
 | `templates/mongodb-rbac.yaml` | Two `ServiceAccount`s, one `Role`, and one `RoleBinding` for MCK | `mongodb.enabled && mongodb.rbac.create` (`mongodb-rbac.yaml:1`) |
 | `templates/mongodb.yaml` | `MongoDBCommunity` | `mongodb.enabled` (`mongodb.yaml:1`) |
-| `templates/networkpolicy.yaml` | HyperDX `NetworkPolicy`; optionally a collector `NetworkPolicy` | Outer `networkPolicy.enabled`; collector policy also requires `otelCollector.enabled` (`networkpolicy.yaml:1,18`) |
+| `templates/networkpolicy.yaml` | HyperDX `NetworkPolicy`; optionally a collector `NetworkPolicy`. Sources restricted by `*IngressFrom` peer lists; OpAMP admits only the release's collector; fluentd 24225 is denied unless `fluentdIngressFrom` is non-empty | Outer `networkPolicy.enabled`; collector policy also requires `otelCollector.enabled` |
 | `templates/otel-collector-configmap.yaml` | Collector custom-config `ConfigMap` | `otelCollector.enabled && otelCollector.customConfig` (`otel-collector-configmap.yaml:1`) |
 | `templates/otel-collector-deployment.yaml` | Collector `Deployment` | `otelCollector.enabled` (`otel-collector-deployment.yaml:1`) |
 | `templates/otel-collector-service.yaml` | Collector OTLP/health/metrics/fluentd `Service` | `otelCollector.enabled` (`otel-collector-service.yaml:1`) |

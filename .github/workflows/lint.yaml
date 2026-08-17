@@ -71,6 +71,12 @@ jobs:
             --set otelCollector.customConfig='receivers: {}' \
             --set otelCollector.enableDatadogReceiver=true \
             --set clickhouse.externalSecret.name=ch-internal-creds \
+            --set bootstrap.register.enabled=true \
+            --set bootstrap.register.email=ci@example.com \
+            --set bootstrap.register.existingSecret=reg-pw \
+            --set-json 'networkPolicy.appIngressFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"ingress-nginx"}}}]' \
+            --set-json 'networkPolicy.telemetryIngressFrom=[{"podSelector":{"matchLabels":{"telemetry":"allowed"}}}]' \
+            --set-json 'networkPolicy.fluentdIngressFrom=[{"podSelector":{"matchLabels":{"fluentd":"allowed"}}}]' \
             --set hyperdx.publicUrl=https://hdx.example.com \
             --set ingress.enabled=true \
             --set ingress.host=hdx.example.com \

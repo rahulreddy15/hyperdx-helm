@@ -49,6 +49,10 @@ OTLP ingestion remains disabled until a user registers. HyperDX only adds the `o
 | `ingress.enabled` | `false` | Expose UI through ingress |
 | `otlpIngress.enabled` | `false` | Expose OTLP/HTTP ingress |
 | `alerting.externalCronJob.enabled` | `false` | Run alert checks externally |
+| `bootstrap.register.enabled` | `false` | Post-install hook Job registers the first user headlessly (requires `email` + `existingSecret` with key `password`) |
+| `networkPolicy.appIngressFrom` | `[]` | Peers allowed to reach UI/API; empty = any. OpAMP always restricted to the release's collector |
+| `networkPolicy.telemetryIngressFrom` | `[]` | Peers allowed to send OTLP/Datadog; empty = any; the app itself is always admitted |
+| `networkPolicy.fluentdIngressFrom` | `[]` | Peers allowed on unauthenticated fluentd 24225; **empty denies the port** |
 
 ClickHouse passwords must be supplied on first install because Helm cannot safely share a random value across independently rendered templates. Existing generated chart Secrets remain reusable during upgrades. External ClickHouse mode likewise requires explicit external users/passwords or `clickhouse.auth.existingSecret`; credentials are never fabricated.
 

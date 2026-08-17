@@ -262,6 +262,10 @@ and `nop`.
 Registration also sets `collectorAuthenticationEnforced: true`, after which OTLP senders
 must pass the team API key in an `authorization` header or get 401.
 
+The chart's `bootstrap.register` post-install hook Job performs this registration
+unattended (409 = already registered = success), so hands-off GitOps bring-up is
+supported without custom scripting.
+
 There is no supported unattended provisioning path. Hands-off GitOps needs a scripted
 `POST /register/password` after install.
 

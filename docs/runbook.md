@@ -216,8 +216,38 @@ curl -X POST http://<collector>:4318/v1/logs \
   -d '{"resourceLogs":[...]}'
 ```
 
-There is no supported way to pre-provision a team unattended. If you need fully hands-off
-GitOps bring-up, script the registration call as a post-install step.
+For fully hands-off bring-up, let the chart do this: enable the bootstrap Job and it
+registers the first user as a post-install/post-upgrade hook (a 409 "team already
+exists" counts as success, so re-runs are safe):
+
+```yaml
+bootstrap:
+  register:
+    enabled: true
+    email: ops@example.com
+    existingSecret: hyperdx-bootstrap   # key: password
+```
+
+The password must satisfy upstream validation and must not contain double quotes or
+backslashes (it is embedded in a JSON body by a shell script).
+
+### Lock down registration
+
+Open-source HyperDX has no `DISABLE_REGISTRATION` switch. The first registration wins the
+team; after that, block the registration surface at the ingress if the UI is public.
+With ingress-nginx:
+
+```yaml
+ingress:
+  annotations:
+    nginx.ingress.kubernetes.io/server-snippet: |
+      location ~* ^/(api/)?register { return 403; }
+```
+
+Other controllers have equivalents (HAProxy `http-request deny`, Traefik middleware).
+Team invites (`/join-team?token=...`) keep working. Note this blocks only the ingress
+path — in-cluster clients can still reach the API Service directly; restrict that with
+`networkPolicy.appIngressFrom` if it matters in your cluster.
 
 ### A Ready collector does not mean ingestion works
 
@@ -309,6 +339,10 @@ mongodb:
 Manage those with External Secrets Operator, Sealed Secrets, or whatever you already run.
 If a referenced key is missing the render fails with a message naming the Secret and key —
 it will not fall back to a placeholder.
+
+For a fully unattended first boot, pair this with `bootstrap.register` (see §2) — Argo CD
+runs the chart's post-install hook as a PostSync job, so telemetry starts flowing without
+anyone opening the UI.
 
 ### Ordering
 

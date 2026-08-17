@@ -115,13 +115,17 @@ The chart defaults assume roughly a 4 vCPU / 8 GB node. For a 2 vCPU / 4 GB node
 > into the collector's pipelines once a team with an API key exists, and teams are created
 > by registration.
 
-Register through the UI, or headlessly:
+Register through the UI, headlessly:
 
 ```bash
 curl -X POST http://<hyperdx>:8000/register/password \
   -H 'Content-Type: application/json' \
   -d '{"email":"you@example.com","password":"...","confirmPassword":"..."}'
 ```
+
+…or fully hands-off: set `bootstrap.register.enabled=true` with an email and a
+password Secret, and a post-install hook Job performs the registration for you —
+re-runs treat "team already exists" as success, so it is GitOps-safe.
 
 Within about a minute the collector picks up its new config and 4317/4318 start listening.
 
@@ -240,7 +244,8 @@ enterprise features. (The `config.standalone.oidc.yaml` file in the upstream rep
 *collector-side* authenticator, not UI OIDC. Easy to misread.) The first registration
 bootstraps the team; subsequent registrations are rejected. There is no
 `DISABLE_REGISTRATION` switch, so if the UI is public, block `/register/password` at the
-ingress once you've registered. Additional users join via team invites
+ingress once you've registered — the [runbook](docs/runbook.md#lock-down-registration)
+has a copy-paste snippet. Additional users join via team invites
 (`/join-team?token=...`).
 
 Two related traps:
@@ -343,7 +348,9 @@ if you can't accept its loss, snapshot the PVC.
   operator has no `secretKeyRef` for users (Altinity's does). Restrict RBAC on that
   resource.
 - Fluent Forward (24225) and the optional Datadog receiver are the unauthenticated
-  surfaces. Keep them ClusterIP + NetworkPolicy'd.
+  surfaces. With `networkPolicy.enabled=true` the fluentd port is **denied by default**
+  and only opens to peers you list in `networkPolicy.fluentdIngressFrom`; telemetry and
+  UI/API sources can be restricted with `telemetryIngressFrom` / `appIngressFrom`.
 - `hyperdx.usageStatsEnabled` defaults to `false` here.
 - Upstream images are **not** cosign-signed, and the collector image ships without
   SBOM/provenance attestations. Sign on ingest if that matters to you.

@@ -9,10 +9,33 @@ spec:
     matchLabels: {{- include "hyperdx.selectorLabelsApp" . | nindent 6 }}
   policyTypes: [Ingress, Egress]
   ingress:
+    # UI + API. No `from` means any source.
     - ports:
         - {port: {{ .Values.hyperdx.appPort }}}
         - {port: {{ .Values.hyperdx.apiPort }}}
+      {{- with .Values.networkPolicy.appIngressFrom }}
+      from: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- if .Values.bootstrap.register.enabled }}
+    # The bootstrap registration Job must reach the API even when appIngressFrom
+    # restricts it.
+    - ports:
+        - {port: {{ .Values.hyperdx.apiPort }}}
+      from:
+        - podSelector:
+            matchLabels:
+              {{- include "hyperdx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: bootstrap
+    {{- end }}
+    # OpAMP: only this release's collector needs it. When the collector is disabled,
+    # leave it open for externally-run collectors.
+    - ports:
         - {port: {{ .Values.hyperdx.opampPort }}}
+      {{- if .Values.otelCollector.enabled }}
+      from:
+        - podSelector:
+            matchLabels: {{- include "hyperdx.selectorLabelsCollector" . | nindent 14 }}
+      {{- end }}
   egress:
     - {}
 {{- if .Values.otelCollector.enabled }}
@@ -27,15 +50,35 @@ spec:
     matchLabels: {{- include "hyperdx.selectorLabelsCollector" . | nindent 6 }}
   policyTypes: [Ingress, Egress]
   ingress:
+    # Telemetry: OTLP gRPC/HTTP (+ Datadog intake when enabled).
     - ports:
         - {port: 4317}
         - {port: 4318}
-        - {port: 13133}
-        - {port: 8888}
-        - {port: 24225}
         {{- if .Values.otelCollector.enableDatadogReceiver }}
         - {port: 8126}
         {{- end }}
+      {{- with .Values.networkPolicy.telemetryIngressFrom }}
+      from: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- if .Values.networkPolicy.telemetryIngressFrom }}
+    # The app's own self-instrumentation OTLP is always admitted.
+    - ports:
+        - {port: 4318}
+      from:
+        - podSelector:
+            matchLabels: {{- include "hyperdx.selectorLabelsApp" . | nindent 14 }}
+    {{- end }}
+    # Probes and metrics scraping.
+    - ports:
+        - {port: 13133}
+        - {port: 8888}
+    {{- with .Values.networkPolicy.fluentdIngressFrom }}
+    # Fluent Forward is UNAUTHENTICATED. It is reachable only from these peers;
+    # with an empty list this rule is absent and the port is denied entirely.
+    - ports:
+        - {port: 24225}
+      from: {{- toYaml . | nindent 8 }}
+    {{- end }}
   egress:
     - {}
 {{- end }}

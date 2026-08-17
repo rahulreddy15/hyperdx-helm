@@ -2,7 +2,7 @@ apiVersion: v2
 name: hyperdx
 description: HyperDX (ClickStack) observability platform with operator-managed ClickHouse and MongoDB
 type: application
-version: 0.3.0
+version: 0.4.0
 appVersion: "2.35.0"
 kubeVersion: ">=1.27.0-0"
 icon: https://avatars.githubusercontent.com/u/130113031?v=4
