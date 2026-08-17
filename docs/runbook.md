@@ -105,8 +105,13 @@ creates `MongoDBCommunity`.
 helm install o11y ./charts/hyperdx \
   --namespace observability --create-namespace \
   --set hyperdx.publicUrl=https://hyperdx.example.com \
+  --set clickhouse.auth.collectorPassword="$(openssl rand -base64 24)" \
+  --set clickhouse.auth.appPassword="$(openssl rand -base64 24)" \
   -f charts/hyperdx/values-small.yaml
 ```
+
+The two ClickHouse passwords are **required on first install** (or supply
+`clickhouse.auth.existingSecret`) — see §3. Everything else has a working default.
 
 Pick the profile that matches your hardware — see [sizing.md](sizing.md). The defaults
 assume roughly 4 vCPU / 8 GB and **will not schedule** on a 2 vCPU / 4 GB node.
@@ -157,8 +162,9 @@ if (apiKeys && apiKeys.length > 0) {
 }
 ```
 
-Teams are created by user registration. Until then the delivered pipelines receive from
-`fluentforward` and `nop` only, so the OTLP ports are never bound.
+Teams are created by user registration. Until then the delivered pipelines receive only
+from `fluentforward`, the `prometheus` scrape receiver, and `nop` — the OTLP ports are
+never bound.
 
 Register the first user — through the UI, or headlessly:
 
@@ -211,9 +217,16 @@ Check the ports, not the pod status.
 
 ## 3. Credentials
 
-By default the chart generates the session secret, both ClickHouse passwords, and the
-MongoDB password on first install, then reuses them on upgrade via `lookup`. The Secret
-carries `helm.sh/resource-policy: keep` so it survives an uninstall.
+The chart generates the session secret and the MongoDB password on first install, then
+reuses them on upgrade via `lookup`. The Secret carries `helm.sh/resource-policy: keep`
+so it survives an uninstall.
+
+The **ClickHouse passwords are the exception: you must supply them on first install**
+(flags or `clickhouse.auth.existingSecret`; the render fails otherwise). They land in two
+independently rendered places — the chart Secret and the `ClickHouseCluster` CR — and Helm
+does not memoize helper results, so a generated random value would differ between the two
+and provision ClickHouse with credentials the app and collector never send. Once
+installed, they are retained across upgrades like everything else.
 
 Two things to know:
 
@@ -337,8 +350,8 @@ upstream revision:
 
 ```
 docker/otel-collector/schema/seed/     # collector-owned, idempotent
-packages/api/migrations/ch/            # versioned, ONE-WAY
-packages/api/migrations/mongo/         # versioned, ONE-WAY
+packages/api/migrations/ch/            # versioned
+packages/api/migrations/mongo/         # versioned
 ```
 
 Empty diff means it's safe. Non-empty means read it before promoting. The
@@ -351,7 +364,8 @@ version tracking**. It will never destroy data — and it will never migrate an 
 table either. A changed column type, codec, or engine silently does not apply. The upgrade
 looks clean while your schema quietly drifts from what the new collector expects.
 
-The API migrations, by contrast, are versioned and irreversible.
+The API migrations, by contrast, are versioned (down migrations exist upstream, but
+rolling back a live schema is untested — treat them as forward-only in practice).
 
 ### Retention changes are not retroactive
 

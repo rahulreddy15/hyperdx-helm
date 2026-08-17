@@ -2,15 +2,20 @@
 
 A Helm chart for [HyperDX](https://github.com/hyperdxio/hyperdx) — the open-source
 observability platform (logs, traces, metrics, session replay) built on ClickHouse and
-OpenTelemetry, now branded **ClickStack**.
-
-Stateful backends are **operator-managed**: ClickHouse via the official ClickHouse
-operator, MongoDB via MongoDB Controllers for Kubernetes (MCK).
+OpenTelemetry, now branded **ClickStack**. Stateful backends are **operator-managed**:
+ClickHouse via the official ClickHouse operator, MongoDB via MongoDB Controllers for
+Kubernetes (MCK).
 
 > **Status: early but validated.** Verified end to end on a live cluster — a clean-room
 > install brings up all five components, the collector creates its ClickHouse schema, and
 > OTLP data sent to `:4318` is queryable from ClickHouse. Not yet run in production, and
 > only single-node ClickHouse has been exercised. Treat `0.1.x` as a preview.
+
+**In this README:** [Why this chart](#why-this-chart) ·
+[Quick start](#quick-start) · [Architecture](#architecture) ·
+[Configuration](#configuration) · [Sending telemetry](#sending-telemetry) ·
+[Operating it](#operating-it) · [Security notes](#security-notes) ·
+[Docs](#more-documentation)
 
 ## Why this chart
 
@@ -20,8 +25,9 @@ is the official option and a good default.
 
 This one differs in a few opinions:
 
-- **Secrets stay out of rendered manifests.** The ClickHouse password is not passed as a
-  plain env value inside `DEFAULT_CONNECTIONS`.
+- **Secrets stay out of rendered manifests.** The official chart's default path passes
+  the ClickHouse password as a plain env value inside `DEFAULT_CONNECTIONS` (a Secret
+  mode is opt-in); here it always comes from a Secret.
 - **Generated passwords survive `helm upgrade`** instead of rotating and breaking the
   deployment or logging everyone out.
 - **Operators are strictly prerequisites**, never bundled — so `helm uninstall` can't take
@@ -31,24 +37,21 @@ This one differs in a few opinions:
 
 If you don't need any of that, use the official chart.
 
-## Requirements
+## Quick start
 
-- Kubernetes >= 1.27
-- Helm >= 3.13
+Four steps. Each has one gotcha, and each gotcha is the thing people trip on.
+
+### 1. Install the operators (once per cluster)
+
+- Kubernetes >= 1.27, Helm >= 3.13
 - [ClickHouse operator](https://github.com/ClickHouse/clickhouse-operator) — provides
   `clickhouse.com/v1alpha1`
 - [MongoDB Controllers for Kubernetes](https://github.com/mongodb/mongodb-kubernetes) —
   provides `mongodbcommunity.mongodb.com/v1`
 
-Both operators are cluster-scoped and install their own CRDs. Install them once per
-cluster, separately from this chart.
-
-<details>
-<summary>Installing the operators</summary>
-
-Both operators ship in **one** chart — `clickstack-operators` bundles MCK alongside the
-ClickHouse operator. Installing `mongodb/mongodb-kubernetes` separately will fail on
-ClusterRole ownership conflicts.
+Both ship in **one** chart — `clickstack-operators` bundles MCK alongside the ClickHouse
+operator (installing `mongodb/mongodb-kubernetes` separately fails on ClusterRole
+ownership conflicts):
 
 ```bash
 helm repo add clickstack https://clickhouse.github.io/ClickStack-helm-charts
@@ -57,46 +60,84 @@ helm install clickstack-operators clickstack/clickstack-operators \
   --set-string 'mongodb-operator.operator.watchNamespace=*'
 ```
 
-`watchNamespace` is **not optional** if you deploy into a different namespace than the
-operators, and it cannot be changed later by `helm upgrade` (immutable `roleRef`). See the
-[runbook](docs/runbook.md).
+> **Gotcha:** `watchNamespace` is not optional if you deploy into a different namespace
+> than the operators, and it cannot be changed later by `helm upgrade` (immutable
+> `roleRef`). Get it right now — see the [runbook](docs/runbook.md#1-install-the-operators).
 
-</details>
+Skipping a backend? Set `clickhouse.enabled=false` or `mongodb.enabled=false`, supply
+connection details, and you don't need that operator at all.
 
-Either backend can be skipped entirely — set `clickhouse.enabled=false` or
-`mongodb.enabled=false` and supply connection details. You then don't need that operator.
+### 2. Install the chart
 
-## Install
+From the published repo (once the first release is out):
+
+```bash
+helm repo add hyperdx-helm https://rahulreddy15.github.io/hyperdx-helm
+```
+
+Or from a clone, using `./charts/hyperdx` as the chart reference:
 
 ```bash
 helm install o11y ./charts/hyperdx \
   --namespace observability --create-namespace \
   --set hyperdx.publicUrl=https://hyperdx.example.com \
   --set ingress.enabled=true \
-  --set ingress.host=hyperdx.example.com
+  --set ingress.host=hyperdx.example.com \
+  --set clickhouse.auth.collectorPassword="$(openssl rand -base64 24)" \
+  --set clickhouse.auth.appPassword="$(openssl rand -base64 24)"
 ```
 
-Everything else has a working default. Passwords and the session secret are generated on
-first install and preserved across upgrades.
+> **Gotcha:** the two ClickHouse passwords are **required on first install** — the render
+> fails without them (deliberately: Helm can't generate one random value consistently
+> across the Secret *and* the ClickHouse CR, and a mismatch would brick the install).
+> Everything else has a working default; the session secret and MongoDB password are
+> generated on first install and preserved across upgrades. Prefer
+> `clickhouse.auth.existingSecret` if you manage secrets externally — and you **must** use
+> the existing-secret paths under Argo CD, where `lookup` never works
+> ([runbook §4](docs/runbook.md#4-gitops--argo-cd)).
 
-### Sending telemetry
+The chart defaults assume roughly a 4 vCPU / 8 GB node. For a 2 vCPU / 4 GB node add
+`-f charts/hyperdx/values-small.yaml`; for production start from
+`values-production.yaml`. See [sizing](docs/sizing.md).
 
-**Register a user first.** A freshly installed stack accepts no telemetry — the collector
-comes up healthy but does not listen on 4317/4318 at all. HyperDX only wires the OTLP
-receiver into the collector's pipelines once a team with an API key exists, and teams are
-created by registration. See the [runbook](docs/runbook.md) for the headless call.
+### 3. Register the first user
 
-Once a team exists, OTLP senders must pass that team's API key in an `authorization`
-header, or the collector returns 401.
+> **Gotcha:** a freshly installed stack accepts **no telemetry**. The collector comes up
+> healthy but does not listen on 4317/4318 at all — HyperDX only wires the OTLP receiver
+> into the collector's pipelines once a team with an API key exists, and teams are created
+> by registration.
 
-The collector accepts OTLP on `4317` (gRPC) and `4318` (HTTP). In-cluster:
+Register through the UI, or headlessly:
+
+```bash
+curl -X POST http://<hyperdx>:8000/register/password \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"...","confirmPassword":"..."}'
+```
+
+Within about a minute the collector picks up its new config and 4317/4318 start listening.
+
+### 4. Send telemetry
+
+Grab the team API key (**Team Settings → API Keys**) and put it in an `authorization`
+header. In-cluster endpoint:
 
 ```
 http://o11y-hyperdx-otel-collector.observability.svc.cluster.local:4318
 ```
 
-For senders outside the cluster, enable `otlpIngress`. Note that OTLP **HTTP** works
-through a standard Ingress; **gRPC** usually needs controller-specific annotations or a
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://o11y-hyperdx-otel-collector:4318
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=<team-api-key>"
+export OTEL_SERVICE_NAME=my-service
+```
+
+> **Gotcha:** the header is the **bare** key — `authorization: <team-api-key>`, **not**
+> `Bearer <key>`. The collector's bearer-token extension is configured with `scheme: ''`,
+> so prefixing it fails with 401. This trips people up constantly.
+
+For senders outside the cluster, enable `otlpIngress`. OTLP **HTTP** works through a
+standard Ingress; **gRPC** usually needs controller-specific annotations or a
 LoadBalancer Service.
 
 ## Architecture
@@ -112,12 +153,8 @@ Two stateful backends. That's the whole dependency list — no Redis, no Postgre
 | alert checker | CronJob | Optional; alerts run in-process by default |
 
 Lose ClickHouse and you lose telemetry history. Lose MongoDB and you lose dashboards and
-logins, but the telemetry survives.
-
-A `KeeperCluster` is deployed even for a single-node ClickHouse — the official operator
-requires `keeperClusterRef` unconditionally.
-
-### How the pieces talk
+logins, but the telemetry survives. (A `KeeperCluster` is deployed even for single-node
+ClickHouse — the official operator requires `keeperClusterRef` unconditionally.)
 
 ```
                       ┌──────────────────────────────────────┐
@@ -153,83 +190,55 @@ Two things about this are worth internalising:
 
 **① The collector pulls its own config.** It opens an OpAMP connection *outbound* to the
 app on 4320 and receives its entire pipeline definition in reply. The app decides which
-receivers exist. This is why telemetry cannot flow before a team exists — see below.
+receivers exist — which is why telemetry cannot flow before a team exists (step 3 above).
 
 **② Telemetry never passes through the app.** The collector writes straight to ClickHouse
 over the native protocol on 9000. The app only *reads*, over HTTP on 8123, as a different
-user with different grants. So a slow UI never slows ingestion, and an app outage doesn't
+user with different grants. A slow UI never slows ingestion, and an app outage doesn't
 stop data landing.
 
-## Access and authentication
+## Configuration
 
-There are two completely separate credentials, and confusing them is the most common
-mistake.
+Every value is documented in [`values.yaml`](charts/hyperdx/values.yaml) — that file is
+the reference. The highlights:
+
+| Concern | Values | Notes |
+|---|---|---|
+| Sizing | `-f values-small.yaml` / defaults / `-f values-production.yaml` | 2/4/8+ vCPU nodes — [sizing](docs/sizing.md) |
+| Credentials | `clickhouse.auth.*`, `mongodb.password`, `auth.sessionSecret` | CH passwords required on install; the rest generated and retained |
+| Externally managed secrets | `*.existingSecret` | Required under Argo CD / GitOps |
+| Bring your own ClickHouse | `clickhouse.enabled=false` + `clickhouse.external.*` | No operator needed |
+| Bring your own MongoDB | `mongodb.enabled=false` + `mongodb.external.*` | URI or Secret reference |
+| Retention | `otelCollector.tablesTtl` | Applied at table creation only — decide **before** first install |
+| UI / OTLP exposure | `ingress.*`, `otlpIngress.*` | gRPC ingress needs controller-specific setup |
+| Custom collector pipelines | `otelCollector.customConfig` | Replaces the entire pipeline definition; you own it across upgrades |
+
+### The two credentials people confuse
 
 | | Who uses it | Where it lives |
 |---|---|---|
 | **Email + password** | Humans logging into the UI | MongoDB `users` |
 | **Team API key** | Applications sending telemetry | MongoDB `teams.apiKey` |
 
-### Logging in
-
-Open-source HyperDX supports **local email/password only**. SSO/OAuth and SAML are cloud
-and enterprise features — there is no self-hosted OIDC login for the UI.
-
-> The `config.standalone.oidc.yaml` and `config.standalone.auth.yaml` files in the upstream
-> repo are **collector-side** authenticators for standalone deployments. They do not add
-> OIDC login to the UI. Easy to misread.
-
-The first registration bootstraps the team; subsequent registrations are rejected. There is
-no `DISABLE_REGISTRATION` switch, so if the UI is public, block `/register/password` at the
-ingress once you've created your account. Additional users come in through team invites
+Open-source HyperDX supports **local email/password only** — SSO/OAuth/SAML are cloud and
+enterprise features. (The `config.standalone.oidc.yaml` file in the upstream repo is a
+*collector-side* authenticator, not UI OIDC. Easy to misread.) The first registration
+bootstraps the team; subsequent registrations are rejected. There is no
+`DISABLE_REGISTRATION` switch, so if the UI is public, block `/register/password` at the
+ingress once you've registered. Additional users join via team invites
 (`/join-team?token=...`).
 
-### Sending telemetry
+Two related traps:
 
-Grab the key from **Team Settings → API Keys**, then send it as a **bare** `authorization`
-header:
+- **`HYPERDX_API_KEY` (`auth.apiKey`) is not the ingestion key.** It configures HyperDX's
+  own self-instrumentation. Putting it in your `authorization` header will not work.
+- **Ingestion auth can be turned off** by clearing `collectorAuthenticationEnforced` on
+  the team document — only sensible when NetworkPolicy already restricts who can reach
+  the collector. The flag is read from the *first* team, not per-receiver.
 
-```
-authorization: <team-api-key>
-```
+## Sending telemetry
 
-**Not** `Bearer <key>`. The collector's bearer-token extension is configured with
-`scheme: ''`, so prefixing it fails. This trips people up constantly.
-
-For an OTel SDK:
-
-```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://hyperdx-otel-collector:4318
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=<team-api-key>"
-export OTEL_SERVICE_NAME=my-service
-```
-
-Forwarding from an existing collector:
-
-```yaml
-exporters:
-  otlphttp/hyperdx:
-    endpoint: http://hyperdx-otel-collector:4318
-    headers:
-      authorization: ${env:HYPERDX_TEAM_API_KEY}
-    compression: gzip
-```
-
-### `HYPERDX_API_KEY` is not the ingestion key
-
-The chart's `auth.apiKey` / `HYPERDX_API_KEY` env var is for HyperDX's **own** self-
-instrumentation. It is a different thing from the per-team `apiKey` in MongoDB. Putting it
-in your `authorization` header will not work unless your deployment deliberately sets both
-to the same value.
-
-### Turning ingestion auth off
-
-Registration sets `collectorAuthenticationEnforced: true` on the team, which is what makes
-the collector demand a key. It can be disabled on the team document if the collector is
-already protected by network policy and only trusted in-cluster senders reach it. Note the
-setting is read from the *first* team, not per-receiver.
-
-## Telemetry formats accepted by default
+What the collector accepts out of the box:
 
 | Format | Port | Path | Auth |
 |---|---:|---|---|
@@ -239,170 +248,117 @@ setting is read from the *first* team, not per-receiver.
 | Prometheus | — | scrape-only | n/a |
 | Datadog | 8126 | Datadog intake | opt-in, see below |
 
-**Fluent Forward is not protected by the team API key.** Upstream has a TODO acknowledging
-this. Fluentd, Fluent Bit, and Docker's fluentd log driver can all write to 24225 with no
-credential, so keep that port on a ClusterIP and covered by NetworkPolicy.
+- **Fluent Forward is not protected by the team API key** (upstream has a TODO
+  acknowledging it). Anything that can reach 24225 can write. Keep it ClusterIP and
+  restrict it with NetworkPolicy.
+- **Prometheus is scrape-only** — the collector scrapes its own metrics (8888) and
+  ClickHouse (9363). There is no remote-write endpoint; `ENABLE_PROMQL=true` adds a query
+  path, not ingestion.
+- **Session replay** (`@hyperdx/browser`) uses the same OTLP endpoint and team key;
+  replay events are OTel logs tagged `rr-web.event`, stored in `hyperdx_sessions`.
+- **Datadog** (`otelCollector.enableDatadogReceiver`) is off by default and
+  **unauthenticated when no team key exists**. Don't expose it without a deliberate
+  decision.
 
-**Prometheus is scrape-only.** The collector scrapes its own metrics on 8888 and ClickHouse
-on 9363. There is no remote-write ingestion endpoint. `ENABLE_PROMQL=true` adds a
-PromQL-compatible query path — it does not turn this into a remote-write receiver.
+The image compiles in more receivers than it enables (`filelog`, `hostmetrics`,
+`dockerstats`, `k8scluster`, `kubeletstats`, …). Turning them on means
+`otelCollector.customConfig`, which replaces the whole app-generated pipeline — you then
+own it across upgrades.
 
-**Browser / session replay** uses `@hyperdx/browser` over the same OTLP endpoint and the
-same team key. Replay events are OTel logs tagged `rr-web.event`, routed to the
-`hyperdx_sessions` table.
+## Operating it
 
-**Datadog** (`otelCollector.enableDatadogReceiver`) is off by default. Current upstream
-authenticates it with `DD-API-KEY` when collector auth is enforced, but it is
-**unauthenticated** when no team key exists. Don't expose it without a deliberate decision.
+### Pod readiness lies here — alert on data, not on pods
 
-### Compiled vs enabled
+Two probes on this stack pass while the thing they appear to vouch for is broken:
 
-The image ships more receivers than it turns on: `otlp`, `fluentforward`, `prometheus`,
-`datadog`, `filelog`, `hostmetrics`, `dockerstats`, `k8scluster`, `kubeletstats`, `nop`.
-Only OTLP, Fluent Forward, Prometheus and (optionally) Datadog are enabled by the
-app-generated config. The rest need `otelCollector.customConfig`, which replaces the whole
-pipeline definition — you then own it across upgrades.
+- The collector's readiness probe checks port 13133, which answers happily **with no
+  pipeline running** — observed `1/1 Ready` for ten minutes while every send was refused.
+- The app's `/health` returns 200 **with MongoDB entirely unreachable**.
 
+Alert on rows arriving in ClickHouse. This is not hypothetical: in load testing, an
+undersized collector refused 64% of traffic while Kubernetes reported it `Running`,
+`Ready`, zero restarts, the whole time.
 
-## Load testing
+### What load testing showed
 
-The short version: **the small profile survives real ingest, but with almost no margin, and
-it fails silently when pushed past it.** Details below.
+The small profile (2 vCPU / 4 GB target) survived 180 s of sustained synthetic OTLP logs
+with **zero loss** — 28.6 M records sent, 28.6 M in ClickHouse; overload surfaced as
+HTTP 503 backpressure, not drops. But the margins were thin and the failure mode is
+silent:
 
-Tested on `values-small.yaml` (targets 2 vCPU / 4 GB) against synthetic OTLP logs. Numbers
-come from two runs, described further down.
+- **ClickHouse peaked 15 MiB under its 2 Gi limit.** Raise
+  `clickhouse.resources.limits.memory` first if you expect sustained ingest.
+- **Peak CPU (~2.2 vCPU) exceeded the profile's namesake.** On a real 2-core node it
+  would have throttled.
+- **Never set the collector memory limit at or below ~1.5 Gi** — that's where its
+  internal `memory_limiter` sits. Below it, the collector fails silently while the pod
+  stays green (the 64% episode above).
 
-### What to change before pushing real volume
+Don't quote the implied ~159k records/sec as capacity — the payload was synthetic and
+highly compressible, and the host had 6 cores. Read it as "does not fall over", not as a
+throughput rating. Methodology, caveats, and the generator script:
+[docs/load-testing.md](docs/load-testing.md).
 
-| If you… | Do this | Why |
-|---|---|---|
-| Expect sustained ingest | Raise `clickhouse.resources.limits.memory` above 2Gi | It peaked 15Mi under the 2Gi limit |
-| Run on a genuinely 2-core node | Raise ClickHouse + collector CPU requests | Peak draw was ~2.2 vCPU, above the profile's namesake |
-| Trim collector memory | **Don't go below 2Gi limit** | Below its ~1.5Gi internal limiter it fails silently |
-| Care about ingest health | Alert on ClickHouse row counts, not pod status | Every readiness signal here lied at some point |
+### Upgrading
 
-### Run 1 — does it hold up?
+Two things before bumping `appVersion`:
 
-180s sustained, 6 concurrent senders, ~300-byte records.
+- **The collector never migrates existing tables.** Its seed SQL is idempotent
+  `CREATE TABLE IF NOT EXISTS` with no version tracking — a changed column type or codec
+  silently won't apply to tables that already exist.
+- **The API migrations** (`packages/api/migrations/{ch,mongo}/`) are versioned; down
+  migrations exist upstream, but rolling back a live schema is untested — treat them as
+  forward-only in practice.
 
-| | |
-|---|---|
-| Records sent | 28,662,500 |
-| **Records in ClickHouse** | **28,662,500 — zero loss** |
-| Rejected upfront | 3,310 requests × HTTP 503 |
-| Restarts / OOMKills | 0 / 0 |
+So the upgrade gate is a diff of those three upstream paths between current and target
+versions: empty diff → safe; non-empty → read it first. The `upstream-check` workflow
+runs this weekly and opens an issue. Upstream releases roughly weekly with per-package
+Changesets tags (`@hyperdx/app@2.35.0`) — there is no single monorepo version.
 
-Yes, it holds up. The 503s are the collector's `memory_limiter` refusing work it couldn't
-finish — backpressure, not data loss. Everything it accepted, it persisted.
+### Backups
 
-That works out to ~159k records/sec, but **do not quote that as capacity**. The payload was
-repetitive synthetic text across 50 host values, which ClickHouse compresses far better
-than real telemetry, and the host had 6 cores rather than the 2 the profile is named for.
-Treat it as "this profile does not fall over under load", not as a throughput rating.
-
-### The margins are the real result
-
-| Component | CPU request | CPU peak | Mem request | Mem peak | Mem limit |
-|---|---:|---:|---:|---:|---:|
-| ClickHouse | 250m | 1108m (4.4×) | 1Gi | **2033Mi** | 2048Mi |
-| collector | 100m | 1119m (11×) | 256Mi | ~1679Mi | 2Gi |
-| hyperdx | 150m | 2m | 384Mi | 399Mi | 1Gi |
-| MongoDB | 150m | 20m | 384Mi | 259Mi | 1Gi |
-
-Three things worth absorbing:
-
-**ClickHouse came within 15Mi of an OOMKill.** 2033Mi against a 2048Mi limit. That is the
-binding constraint on this profile, and the first thing to raise.
-
-**Peak CPU exceeded the profile's own name.** ClickHouse and the collector together drew
-~2.2 vCPU. Nothing throttled only because the test host had spare cores; on an actual
-2-core node it would have.
-
-**Requests sit far below peak usage — deliberately.** Kubernetes schedules on requests, so
-the profile fits a small node at idle and bursts well beyond it under load. That is a bet
-on burstiness. Pack a node using these numbers and a traffic spike will cause eviction.
-
-### Run 2 — what failure looks like
-
-Same load, collector limit dropped to 512Mi (below its ~1.5Gi internal limiter):
-
-| | |
-|---|---|
-| Accepted | 17,054 requests |
-| **Failed** | **30,644 (64%)** — mostly connection refused |
-| Collector memory | 130Mi → 355Mi → 13Mi |
-| Pod status throughout | `1/1 Running`, **restarts = 0** |
-
-This is the part worth remembering. Kubernetes reported the pod perfectly healthy the whole
-time — Ready, no restarts, no events — while two thirds of telemetry was refused at the
-socket. Memory collapsing to 13Mi suggests the collector process died and was restarted
-*inside* the container by its supervisor, so the kubelet never saw it.
-
-We could not confirm that mechanism (no crash appeared in the supervisor log), so treat the
-cause as unverified. The symptom is reproducible.
-
-The lesson generalises: **on this stack, pod readiness is not evidence of working
-ingestion.** The collector's probe checks port 13133, which answers happily with no
-pipeline running. The app's `/health` returns 200 with MongoDB entirely unreachable. Alert
-on data arriving, not on pods being green.
-
-### How far to trust this
-
-- Synthetic, highly compressible payloads — real telemetry will be heavier per byte
-- 6-core host, so CPU was never the true constraint
-- Logs only; traces and metrics write differently
-- 3 minutes — long enough to surface backpressure, too short for merge pressure, disk
-  growth, or TTL behaviour
-
-Reproduction steps and the generator script are in [docs/load-testing.md](docs/load-testing.md).
-
-## Upgrading
-
-Two things to know before bumping `appVersion`.
-
-**The collector does not migrate existing tables.** Its seed SQL is idempotent
-`CREATE TABLE IF NOT EXISTS` with no version tracking. It will never destroy data, but a
-changed column type or codec silently won't apply to tables that already exist. Upgrades
-look clean while schema quietly drifts.
-
-**The API migrations are one-way.** `packages/api/migrations/ch/` and
-`packages/api/migrations/mongo/` are versioned and not reversible.
-
-So before promoting an upstream bump, diff those three directories between the current and
-target upstream revision. Empty diff means it's safe. Non-empty means read it first.
-
-Upstream releases roughly weekly with per-package Changesets tags
-(`@hyperdx/app@2.34.0`) — there is no single monorepo version.
-
-## Backups
-
-MCK Community has no backup integration. A 3-member replica set is availability, not
-backup — it won't save you from an accidental delete.
-
-Back up MongoDB (dashboards, users, alert rules) with Velero, CSI snapshots, or a scheduled
-`mongodump`. ClickHouse is usually reconstructible from re-ingested telemetry, so most
-people accept its loss; if you can't, snapshot the PVC.
+MCK Community has no backup integration — a 3-member replica set is availability, not
+backup. Back up MongoDB (dashboards, users, alert rules) with Velero, CSI snapshots, or a
+scheduled `mongodump`. ClickHouse is usually reconstructible from re-ingested telemetry;
+if you can't accept its loss, snapshot the PVC.
 
 ## Security notes
 
-- `otelCollector.enableDatadogReceiver` opens an **unauthenticated** receiver. Off by
-  default. Leave it off unless you've made a deliberate ingress and NetworkPolicy decision.
-- ClickHouse user passwords render into the `ClickHouseCluster` CR. The official operator
-  has no `secretKeyRef` for users (Altinity's does). Restrict RBAC on that resource.
-- `hyperdx.usageStatsEnabled` is `false` by default here.
-- Upstream images are **not** cosign-signed. The collector image also ships without SBOM or
-  provenance attestations. Sign on ingest if that matters to you.
+- ClickHouse user passwords render into the `ClickHouseCluster` CR — the official
+  operator has no `secretKeyRef` for users (Altinity's does). Restrict RBAC on that
+  resource.
+- Fluent Forward (24225) and the optional Datadog receiver are the unauthenticated
+  surfaces. Keep them ClusterIP + NetworkPolicy'd.
+- `hyperdx.usageStatsEnabled` defaults to `false` here.
+- Upstream images are **not** cosign-signed, and the collector image ships without
+  SBOM/provenance attestations. Sign on ingest if that matters to you.
+
+## More documentation
+
+| Doc | What's in it |
+|---|---|
+| [docs/runbook.md](docs/runbook.md) | Operator install, first run, credentials, Argo CD, troubleshooting, uninstall |
+| [docs/sizing.md](docs/sizing.md) | Profiles, small-node tuning, storage math, the version-probe and memory-limiter traps |
+| [docs/load-testing.md](docs/load-testing.md) | Methodology and reproduction for the numbers above |
+| [AGENTS.md](AGENTS.md) | Design decisions, upstream tracking, and the accumulated gotchas — read before contributing |
+| [charts/hyperdx/README.md](charts/hyperdx/README.md) | Chart-level values reference |
 
 ## Contributing
 
 ```bash
 helm lint charts/hyperdx
-helm template t charts/hyperdx > /dev/null
+helm template t charts/hyperdx \
+  --set clickhouse.auth.collectorPassword=a --set clickhouse.auth.appPassword=b > /dev/null
 ```
 
-Every values file under `charts/hyperdx/ci/` must render cleanly. See
-[AGENTS.md](AGENTS.md) for design decisions, upstream tracking, and the accumulated
-gotchas — read it before making changes.
+A bare `helm template` with no ClickHouse credentials is **expected to fail** — that's the
+first-install credential guard, not a bug. Every values file under `charts/hyperdx/ci/`
+must render cleanly.
+
+CI also runs a real-cluster test on kind (`.github/workflows/e2e.yaml`): fresh install →
+headless registration → OTLP send → row asserted in ClickHouse, plus a base-branch → PR
+upgrade asserting generated credentials survive. Run it against any local cluster with
+`hack/e2e.sh`. See [AGENTS.md](AGENTS.md) before making changes.
 
 ## License
 

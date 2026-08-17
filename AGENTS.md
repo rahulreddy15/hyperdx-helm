@@ -84,7 +84,8 @@ Known costs, accepted:
 ### MongoDB: MCK with the Community CRD
 
 We use [mongodb/mongodb-kubernetes](https://github.com/mongodb/mongodb-kubernetes) (MCK —
-the unified operator that merged the Community and Enterprise operators; Apache 2.0).
+the unified operator that merged the Community and Enterprise operators; dual-licensed,
+Apache 2.0 for the Community use case).
 
 **Use `MongoDBCommunity` (`mongodbcommunity.mongodb.com/v1`).** This is the free path and
 needs no Ops Manager or Cloud Manager.
@@ -143,8 +144,8 @@ target upstream revision:
 
 ```
 docker/otel-collector/schema/seed/     # collector-owned, idempotent
-packages/api/migrations/ch/            # API-owned, versioned, ONE-WAY
-packages/api/migrations/mongo/         # API-owned, versioned, ONE-WAY
+packages/api/migrations/ch/            # API-owned, versioned
+packages/api/migrations/mongo/         # API-owned, versioned
 ```
 
 Empty diff → safe to auto-merge. Non-empty → requires human review.
@@ -164,8 +165,9 @@ It will **not** destroy data. It will **silently fail to migrate** — a changed
 codec, or engine never retrofits an existing table. Upgrades look clean while schema quietly
 drifts.
 
-By contrast `packages/api/migrations/ch/` and `.../mongo/` **are** versioned and one-way.
-Respect those.
+By contrast `packages/api/migrations/ch/` and `.../mongo/` **are** versioned. (Down
+migrations exist upstream, but rolling back a live schema is untested — treat them as
+forward-only in practice.) Respect those.
 
 ### 2. Mongo user must authenticate against the app database, not `admin`
 
@@ -217,10 +219,14 @@ Note also that upstream falls back to a **known hardcoded dev string** if
 The collector's internal `memory_limiter` is configured around 1.5 GiB. A pod memory limit
 at or below that causes OOM kills before the limiter can shed load.
 
-### 7. `enableDatadogReceiver` is unauthenticated
+### 7. `enableDatadogReceiver` can be unauthenticated
 
-`ENABLE_DATADOG_RECEIVER=true` opens a receiver with no authentication. Default is off and
-it should stay off unless the user has made an explicit ingress/NetworkPolicy decision.
+`ENABLE_DATADOG_RECEIVER=true` opens a Datadog intake receiver on 8126. Current upstream
+authenticates it with a `DD-API-KEY` header (the team API key) only when collector auth is
+enforced; with no team key it is unauthenticated. The env var is read by the **API server**
+(`packages/api/src/config.ts`), which generates the collector's config over OpAMP — setting
+it on the collector container does nothing. Default is off and it should stay off unless
+the user has made an explicit ingress/NetworkPolicy decision.
 
 ### 8. There is no `depends_on` in Kubernetes
 
@@ -250,7 +256,8 @@ and never binds 4317/4318.
 HyperDX pushes the collector's pipeline config over OpAMP, and in
 `packages/api/src/opamp/controllers/opampController.ts` the OTLP receiver is attached only
 when at least one team has an API key. Teams are created by registration. Before that, the
-delivered pipelines receive from `fluentforward` and `nop` only.
+delivered pipelines receive only from `fluentforward`, the `prometheus` scrape receiver,
+and `nop`.
 
 Registration also sets `collectorAuthenticationEnforced: true`, after which OTLP senders
 must pass the team API key in an `authorization` header or get 401.
@@ -321,22 +328,29 @@ charts/hyperdx/          the chart
   templates/
   ci/                    values files exercised by CI render checks
 docs/                    design notes and runbooks
-.github/workflows/       lint, render, upstream tracking
+hack/e2e.sh              real-cluster e2e (kind in CI, any kubectl context locally)
+.github/workflows/       lint/render, e2e on kind, upstream tracking, chart releases
 ```
 
 ### Verify before committing
 
 ```bash
 helm lint charts/hyperdx
-helm template t charts/hyperdx > /dev/null
+helm template t charts/hyperdx \
+  --set clickhouse.auth.collectorPassword=a --set clickhouse.auth.appPassword=b > /dev/null
 helm template t charts/hyperdx -f charts/hyperdx/ci/minimal-values.yaml > /dev/null
 ```
+
+A bare `helm template t charts/hyperdx` with no credentials is **expected to fail** —
+that is the first-install credential guard (see charts/hyperdx/AGENTS.md), not a bug.
 
 Also render the external-backend path, since it is easy to break:
 
 ```bash
 helm template t charts/hyperdx \
   --set clickhouse.enabled=false --set clickhouse.external.host=ch.example.com \
+  --set clickhouse.external.collectorUser=otelcollector --set clickhouse.external.collectorPassword=a \
+  --set clickhouse.external.appUser=app --set clickhouse.external.appPassword=b \
   --set mongodb.enabled=false --set mongodb.external.uri=mongodb://x/y > /dev/null
 ```
 

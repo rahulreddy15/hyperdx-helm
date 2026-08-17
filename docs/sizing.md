@@ -51,7 +51,9 @@ Roughly a 4 vCPU / 8 GB node with 120 GB of storage.
 ## Minimum viable: 2 vCPU / 4 GB
 
 ```bash
-helm install o11y ./charts/hyperdx -f charts/hyperdx/values-small.yaml
+helm install o11y ./charts/hyperdx -f charts/hyperdx/values-small.yaml \
+  --set clickhouse.auth.collectorPassword="$(openssl rand -base64 24)" \
+  --set clickhouse.auth.appPassword="$(openssl rand -base64 24)"
 ```
 
 | Component | CPU | Memory | Disk |
@@ -114,8 +116,13 @@ happy ClickHouse.
 ## Production
 
 ```bash
-helm install o11y ./charts/hyperdx -f charts/hyperdx/values-production.yaml
+helm install o11y ./charts/hyperdx -f charts/hyperdx/values-production.yaml \
+  --set clickhouse.auth.collectorPassword="$(openssl rand -base64 24)" \
+  --set clickhouse.auth.appPassword="$(openssl rand -base64 24)"
 ```
+
+(Production should manage credentials via `clickhouse.auth.existingSecret` instead of
+flags — see the [runbook](runbook.md#3-credentials).)
 
 Start at 8 vCPU / 32 GB and grow ClickHouse first. Key points:
 
@@ -195,7 +202,8 @@ trying to run on.
 Before starting the cluster, the operator runs a short-lived Job to detect the ClickHouse
 version. Its default memory limit is 256 MiB, which **OOMs on arm64 and constrained nodes**.
 
-The Job uses `backoffLimit: 0`, so a single failure is terminal. The cluster then sits
+The Job uses `backoffLimit: 0` in released operator versions (through 0.0.7; raised to 1
+on the operator's main branch), so a single failure is terminal. The cluster then sits
 indefinitely reporting only:
 
 ```
