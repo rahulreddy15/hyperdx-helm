@@ -6,10 +6,11 @@ OpenTelemetry, now branded **ClickStack**. Stateful backends are **operator-mana
 ClickHouse via the official ClickHouse operator, MongoDB via MongoDB Controllers for
 Kubernetes (MCK).
 
-> **Status: early but validated.** Verified end to end on a live cluster — a clean-room
-> install brings up all five components, the collector creates its ClickHouse schema, and
-> OTLP data sent to `:4318` is queryable from ClickHouse. Not yet run in production, and
-> only single-node ClickHouse has been exercised. Treat `0.1.x` as a preview.
+> **Verified end to end.** Clean-room install, headless registration, OTLP ingest, and
+> upgrade credential retention are exercised on real clusters — by the kind-based e2e
+> suite in CI and by repeated live runs of exactly the quickstart below, most recently a
+> from-scratch minikube bring-up. Data sent to `:4318` lands in ClickHouse and is
+> queryable in the UI.
 
 **In this README:** [Why this chart](#why-this-chart) ·
 [Quick start](#quick-start) · [Architecture](#architecture) ·
@@ -77,16 +78,9 @@ helm install clickhouse-operator oci://ghcr.io/clickhouse/clickhouse-operator-he
 
 ### 2. Install the chart
 
-From the published repo (once the first release is out):
-
 ```bash
 helm repo add hyperdx-helm https://rahulreddy15.github.io/hyperdx-helm
-```
-
-Or from a clone, using `./charts/hyperdx` as the chart reference:
-
-```bash
-helm install o11y ./charts/hyperdx \
+helm install o11y hyperdx-helm/hyperdx \
   --namespace observability --create-namespace \
   --set hyperdx.publicUrl=https://hyperdx.example.com \
   --set ingress.enabled=true \
@@ -94,6 +88,28 @@ helm install o11y ./charts/hyperdx \
   --set clickhouse.auth.collectorPassword="$(openssl rand -base64 24)" \
   --set clickhouse.auth.appPassword="$(openssl rand -base64 24)"
 ```
+
+(From a clone, use `./charts/hyperdx` as the chart reference instead of
+`hyperdx-helm/hyperdx`.)
+
+**Running locally (minikube, kind, Docker Desktop)?** Skip the ingress and point
+`publicUrl` at the port-forward you'll use:
+
+```bash
+helm install o11y ./charts/hyperdx \
+  --namespace observability --create-namespace \
+  --set hyperdx.publicUrl=http://localhost:8080 \
+  --set clickhouse.auth.collectorPassword="$(openssl rand -base64 24)" \
+  --set clickhouse.auth.appPassword="$(openssl rand -base64 24)"
+```
+
+> **Gotcha:** `publicUrl` is where the app sends the browser back after every login
+> attempt (`FRONTEND_URL`). Point it at a host your browser can't reach — or leave it
+> empty locally, which defaults to the in-cluster Service URL — and login bounces to the
+> wrong host with `?err=authFail`. For port-forward access it must be
+> `http://localhost:8080`. Already installed with the wrong value? Fix without losing
+> anything: `helm upgrade o11y ./charts/hyperdx -n observability --reuse-values
+> --set ingress.enabled=false --set hyperdx.publicUrl=http://localhost:8080`.
 
 > **Gotcha:** the two ClickHouse passwords are **required on first install** — the render
 > fails without them (deliberately: Helm can't generate one random value consistently
@@ -108,6 +124,12 @@ The chart defaults assume roughly a 4 vCPU / 8 GB node. For a 2 vCPU / 4 GB node
 `-f charts/hyperdx/values-small.yaml`; for production start from
 `values-production.yaml`. See [sizing](docs/sizing.md).
 
+Watch it come up with `kubectl get pods -n observability -w`. Five pods appear: Keeper,
+ClickHouse, and MongoDB (created by the operators a minute or so after install), then
+the app and collector. **MongoDB is normally the last one Ready** — MCK's automation
+agent configures the replica set inside the pod before `mongod` starts serving, which
+adds a few minutes. It's not stuck.
+
 ### 3. Register the first user
 
 > **Gotcha:** a freshly installed stack accepts **no telemetry**. The collector comes up
@@ -115,7 +137,14 @@ The chart defaults assume roughly a 4 vCPU / 8 GB node. For a 2 vCPU / 4 GB node
 > into the collector's pipelines once a team with an API key exists, and teams are created
 > by registration.
 
-Register through the UI, headlessly:
+Running locally, port-forward the app first, then register in the browser at
+http://localhost:8080 (signup form) — or headlessly against `localhost:8000`:
+
+```bash
+kubectl port-forward svc/o11y-hyperdx -n observability 8080:8080 8000:8000
+```
+
+Register through the UI, or headlessly:
 
 ```bash
 curl -X POST http://<hyperdx>:8000/register/password \
@@ -136,6 +165,12 @@ header. In-cluster endpoint:
 
 ```
 http://o11y-hyperdx-otel-collector.observability.svc.cluster.local:4318
+```
+
+Locally, port-forward the collector and send to `http://localhost:4318`:
+
+```bash
+kubectl port-forward svc/o11y-hyperdx-otel-collector -n observability 4318:4318
 ```
 
 ```bash
