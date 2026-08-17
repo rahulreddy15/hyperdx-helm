@@ -383,4 +383,17 @@ A change is not done until every `ci/*.yaml` values file renders cleanly.
   scheduled `mongodump`.
 - **OTLP gRPC (4317) over Ingress is awkward.** HTTP (4318) works through a normal Ingress;
   gRPC generally needs controller-specific annotations or a LoadBalancer Service.
-- **ClickHouse is single-node by default.** Sharding and replication are untested here.
+- **ClickHouse is single-node, and the chart refuses to scale it out.** Tested live
+  (2026-08-17, chart 0.2.0, ClickHouse 26.5.6, 1 shard × 2 replicas on the official
+  operator): the operator recreates the `default` database as
+  `ENGINE=Replicated('/clickhouse/databases/default','{shard}','{replica}')` — which is
+  why Keeper is mandatory — so **DDL propagates to every replica** (all tables appear
+  everywhere and every pod reports Ready). But the collector's seed schema is plain
+  `MergeTree`, ClickHouse does not auto-convert it, and **table data does not
+  replicate**: `system.replicas` is empty, inserts land only on the replica holding the
+  collector's connection, and the same count query through the Service flaps between
+  divergent answers per connection. A silently split-brained "HA" that passes health
+  checks. The chart therefore `fail`s on `clickhouse.replicas` or `shards` > 1. Fixing
+  this properly means replicated table engines in the upstream seed schema (plus a
+  Distributed layer for sharding). Until then: scale vertically, or bring your own
+  replicated ClickHouse via `clickhouse.enabled=false`.

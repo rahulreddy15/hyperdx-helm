@@ -102,6 +102,10 @@ clickhouse:
   external: {host: "", httpPort: 8123, nativePort: 9000, collectorUser: "", collectorPassword: "", appUser: "", appPassword: ""}
   image: {repository: clickhouse/clickhouse-server}
   version: "26.5-alpine" # Schema seeding includes a pre-26.2 compatibility path.
+  # Values above 1 are refused by the chart. Tested live: the operator replicates DDL
+  # (Replicated `default` database) but the collector's MergeTree tables do not
+  # replicate data, so replicas silently diverge behind one Service. Scale vertically,
+  # or bring your own replicated ClickHouse via `enabled: false` + `external`.
   shards: 1
   replicas: 1
   storage: {size: 50Gi, storageClassName: ""}

@@ -1,4 +1,7 @@
 {{- if .Values.clickhouse.enabled }}
+{{- if or (gt (int .Values.clickhouse.replicas) 1) (gt (int .Values.clickhouse.shards) 1) }}
+{{- fail "clickhouse.replicas/shards > 1 is refused: the collector's seed schema uses non-replicated MergeTree tables. The operator's Replicated `default` database propagates DDL to every replica, but table DATA does not replicate (verified live: system.replicas empty, inserts land on one replica, reads through the Service flap between divergent replicas). Scale ClickHouse vertically, or bring a properly replicated ClickHouse via clickhouse.enabled=false + clickhouse.external.*" }}
+{{- end }}
 apiVersion: clickhouse.com/v1alpha1
 kind: ClickHouseCluster
 metadata:

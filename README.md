@@ -154,7 +154,14 @@ Two stateful backends. That's the whole dependency list — no Redis, no Postgre
 
 Lose ClickHouse and you lose telemetry history. Lose MongoDB and you lose dashboards and
 logins, but the telemetry survives. (A `KeeperCluster` is deployed even for single-node
-ClickHouse — the official operator requires `keeperClusterRef` unconditionally.)
+ClickHouse — the official operator requires `keeperClusterRef` unconditionally, and uses
+Keeper to replicate the `default` database's DDL.)
+
+**ClickHouse is single-node by design here, and the chart refuses `replicas`/`shards`
+above 1.** Verified on a live cluster: the operator replicates schema across replicas,
+but the collector's `MergeTree` tables do not replicate *data* — replicas silently
+diverge behind one Service while every pod reports Ready. Scale ClickHouse vertically,
+or point the chart at your own replicated ClickHouse (`clickhouse.enabled=false`).
 
 ```
                       ┌──────────────────────────────────────┐
