@@ -1,6 +1,7 @@
 # Load testing
 
-Methodology and reproduction steps for the numbers in the [README](../README.md#load-testing).
+Methodology and reproduction steps for the numbers in
+[operations.md](operations.md#what-load-testing-showed).
 
 ## Setup
 
