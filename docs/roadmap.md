@@ -35,6 +35,18 @@ on any drift. Two arrivals matter:
    upstream `main`): `TimeSeries` has no Replicated variant — re-evaluate the design
    before enabling replication on that appVersion.
 
+## ClickHouse on object storage (idea, unverified)
+
+ClickHouse OSS supports S3-compatible storage for MergeTree data (full-S3 with a local
+filesystem cache, or tiered hot-PVC/cold-S3 via TTL moves). Likely wireable through
+`clickhouse.extraSettings` (→ server `storage_configuration`) plus a global
+`<merge_tree><storage_policy>` default so the collector's seed tables inherit it with
+zero DDL changes — **untested**. Caveats to verify: Keeper/metadata stay on PVC;
+credentials render into the CR unless IAM/env-based; request-cost/latency profile needs
+a cache disk; per-table TTL-move tiering is collector-owned DDL (same pre-seed story as
+replication). Verification step: MinIO on the test cluster, ingest, restart, assert
+parts on the bucket.
+
 ## Upstream issues to file
 
 - Env-gated `ReplicatedMergeTree` seeding in ClickStack's collector seed SQL
