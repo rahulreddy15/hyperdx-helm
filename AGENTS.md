@@ -378,6 +378,9 @@ A change is not done until every `ci/*.yaml` values file renders cleanly.
 - **ClickHouse user passwords render into the `ClickHouseCluster` CR.** The official
   operator has no Secret reference for users. Anyone with read access to the CR can read
   them. Mitigation is RBAC on the CR. Revisit if the operator adds `secretKeyRef`.
+  Do not confuse this with `spec.externalSecret` — that field sources only the cluster's
+  *internal* credentials (interserver password, management password, keeper identity),
+  never the users defined under `extraUsersConfig`.
 - **No backup story for MongoDB.** MCK Community has no Enterprise backup integration. A
   3-member replica set is availability, not backup. Users need Velero, CSI snapshots, or
   scheduled `mongodump`.
@@ -397,3 +400,11 @@ A change is not done until every `ci/*.yaml` values file renders cleanly.
   this properly means replicated table engines in the upstream seed schema (plus a
   Distributed layer for sharding). Until then: scale vertically, or bring your own
   replicated ClickHouse via `clickhouse.enabled=false`.
+  This matches the operator's own contract — its scaling guide
+  (`docs/guides/scaling.mdx`) states: "To run more than one replica per shard, the data
+  must also live in `ReplicatedMergeTree` tables", its database sync "does not move
+  table data", and for shards "the operator does not copy or move rows between shards.
+  A `Distributed` table or an explicit routing scheme decides which shard a row lands
+  on." The operator manages topology, database-DDL sync (`enableDatabaseSync`, default
+  true), Keeper quorum, and per-shard/Keeper PodDisruptionBudgets; data replication is
+  entirely the table engine's job.
