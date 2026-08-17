@@ -67,7 +67,10 @@ otelCollector:
   clickhousePrometheusEndpoint: ""
   tablesTtl: "720h"
   customConfig: "" # Mounted and selected with CUSTOM_OTELCOL_CONFIG_FILE.
-  # DANGER: true opens an UNAUTHENTICATED Datadog receiver. Never expose it to untrusted networks.
+  # Opens a Datadog intake receiver on 8126. Sets ENABLE_DATADOG_RECEIVER on the app —
+  # the API generates the collector's config over OpAMP; a collector-side env cannot do
+  # this. DANGER: unauthenticated until a team exists and collector auth is enforced
+  # (then it requires the team key as DD-API-KEY). Never expose it to untrusted networks.
   enableDatadogReceiver: false
   initImage: busybox:1.36
   resources:
@@ -146,8 +149,10 @@ mongodb:
   resources:
     requests: {cpu: 200m, memory: 512Mi}
     limits: {memory: 1Gi}
-  # MCK requires database pod RBAC in every watched namespace; its operator chart
-  # creates this only in the operator namespace. Set false if an admin provisions it centrally.
+  # MCK requires database pod RBAC in every watched namespace. With watchNamespace='*'
+  # its operator chart creates this only in the operator namespace, so this chart creates
+  # it here. MongoDBCommunity pods run as `mongodb-kubernetes-appdb`. Set false if an
+  # admin provisions it centrally.
   rbac:
     create: true
     serviceAccountName: mongodb-kubernetes-appdb

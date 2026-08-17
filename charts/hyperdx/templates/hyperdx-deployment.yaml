@@ -77,6 +77,11 @@ spec:
             {{- if .Values.alerting.externalCronJob.enabled }}
             - {name: RUN_SCHEDULED_TASKS_EXTERNALLY, value: "true"}
             {{- end }}
+            {{- if .Values.otelCollector.enableDatadogReceiver }}
+            # Read by the API, not the collector: the API generates the collector's
+            # pipeline config over OpAMP and only it can add the datadog receiver.
+            - {name: ENABLE_DATADOG_RECEIVER, value: "true"}
+            {{- end }}
             {{- range $name, $value := .Values.hyperdx.env }}
             - {name: {{ $name }}, value: {{ $value | quote }}}
             {{- end }}

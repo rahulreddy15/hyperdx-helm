@@ -15,4 +15,7 @@ spec:
     - {name: health, port: 13133, targetPort: health}
     - {name: metrics, port: 8888, targetPort: metrics}
     - {name: fluentd, port: 24225, targetPort: fluentd}
+    {{- if .Values.otelCollector.enableDatadogReceiver }}
+    - {name: datadog, port: 8126, targetPort: datadog}
+    {{- end }}
 {{- end }}
