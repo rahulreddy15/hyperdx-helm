@@ -1,0 +1,64 @@
+name: e2e
+
+# Real-cluster tests on kind. Render checks (lint.yaml) prove the chart is valid YAML;
+# these prove the deployed system actually works:
+#
+#   install — operators + chart on a fresh cluster, then the full ingestion path:
+#             no OTLP listener before registration, headless registration, bare-header
+#             auth (401 without key / 401 with Bearer prefix / 2xx bare), one OTLP
+#             record asserted present in ClickHouse.
+#   upgrade — installs the merge-base chart, upgrades to the PR chart, and asserts
+#             generated credentials survive unchanged (lookup retention) and that
+#             ingestion still works. Also implicitly guards the immutable
+#             Deployment/PDB selectors: a selector change makes the upgrade fail.
+#
+# Both drive hack/e2e.sh, which also runs against any local cluster.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: e2e
+
+      - name: Run e2e (fresh install)
+        run: hack/e2e.sh
+        env:
+          E2E_TIMEOUT: 25m
+
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history so the baseline ref can be checked out as a worktree.
+          fetch-depth: 0
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: e2e-upgrade
+
+      - name: Run e2e (upgrade from base branch)
+        run: hack/e2e.sh
+        env:
+          E2E_UPGRADE_FROM_REF: origin/${{ github.base_ref || 'main' }}
+          E2E_TIMEOUT: 25m

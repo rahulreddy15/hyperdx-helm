@@ -1,0 +1,53 @@
+name: release
+
+# Publishes the chart with chart-releaser: every push to main that changes charts/
+# packages any chart whose Chart.yaml version is new, attaches the .tgz to a GitHub
+# Release, and updates index.yaml on the gh-pages branch. Consumers then use:
+#
+#   helm repo add hyperdx-helm https://rahulreddy15.github.io/hyperdx-helm
+#   helm install o11y hyperdx-helm/hyperdx ...
+#
+# One-time repository setup (manual, once):
+#   1. git switch --orphan gh-pages
+#      git commit --allow-empty -m "chart index"
+#      git push origin gh-pages
+#      git switch main
+#   2. Settings -> Pages -> Deploy from a branch -> gh-pages / root, and confirm the
+#      site is served at https://rahulreddy15.github.io/hyperdx-helm
+# After that, releases are fully automatic on chart version bumps.
+
+on:
+  push:
+    branches: [main]
+    paths: [charts/**]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+
+      - name: Lint before releasing
+        run: helm lint charts/hyperdx
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.7.0
+        with:
+          skip_existing: true
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

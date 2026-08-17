@@ -6,7 +6,7 @@ name: upstream-check
 # The whole point of this workflow is the schema diff. The collector applies its ClickHouse
 # schema as idempotent `CREATE TABLE IF NOT EXISTS` with no version tracking, so it will
 # never fail loudly on an incompatible change — it just silently leaves existing tables
-# alone. The API migrations under packages/api/migrations/ are versioned and one-way.
+# alone. The API migrations under packages/api/migrations/ are versioned.
 #
 # Empty diff across those paths -> safe. Non-empty -> read it before promoting.
 
@@ -151,8 +151,8 @@ jobs:
 
           Paths checked:
           - \`docker/otel-collector/schema/seed\` — collector-owned, idempotent, does **not** alter existing tables
-          - \`packages/api/migrations/ch\` — versioned, one-way
-          - \`packages/api/migrations/mongo\` — versioned, one-way
+          - \`packages/api/migrations/ch\` — versioned
+          - \`packages/api/migrations/mongo\` — versioned
 
           \`\`\`
           ${{ steps.schema.outputs.diff }}

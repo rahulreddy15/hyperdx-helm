@@ -19,8 +19,21 @@ jobs:
       - name: helm lint
         run: helm lint charts/hyperdx
 
-      - name: Render default values
-        run: helm template t charts/hyperdx > /dev/null
+      # A bare render with no credentials must FAIL: that is the first-install
+      # credential guard (see charts/hyperdx/AGENTS.md, "Credential model").
+      - name: Credential guard rejects a bare render
+        run: |
+          if helm template t charts/hyperdx > /dev/null 2>&1; then
+            echo "Expected render to fail without ClickHouse credentials." >&2
+            exit 1
+          fi
+
+      - name: Render default values (with credentials)
+        run: |
+          helm template t charts/hyperdx \
+            --set clickhouse.auth.collectorPassword=ci-collector \
+            --set clickhouse.auth.appPassword=ci-app \
+            > /dev/null
 
       - name: Render every ci/ values file
         run: |
@@ -42,6 +55,10 @@ jobs:
           helm template t charts/hyperdx \
             --set clickhouse.enabled=false \
             --set clickhouse.external.host=ch.example.com \
+            --set clickhouse.external.collectorUser=otelcollector \
+            --set clickhouse.external.collectorPassword=ci-collector \
+            --set clickhouse.external.appUser=app \
+            --set clickhouse.external.appPassword=ci-app \
             --set mongodb.enabled=false \
             --set mongodb.external.uri=mongodb://user:pass@mongo.example.com/hyperdx \
             > /dev/null
@@ -49,6 +66,10 @@ jobs:
       - name: Render ingress + cronjob path
         run: |
           helm template t charts/hyperdx \
+            --set clickhouse.auth.collectorPassword=ci-collector \
+            --set clickhouse.auth.appPassword=ci-app \
+            --set otelCollector.customConfig='receivers: {}' \
+            --set otelCollector.enableDatadogReceiver=true \
             --set hyperdx.publicUrl=https://hdx.example.com \
             --set ingress.enabled=true \
             --set ingress.host=hdx.example.com \
@@ -79,7 +100,9 @@ jobs:
       # This validates the core Kubernetes objects only.
       - name: Validate rendered manifests
         run: |
-          helm template t charts/hyperdx | \
+          helm template t charts/hyperdx \
+            --set clickhouse.auth.collectorPassword=ci-collector \
+            --set clickhouse.auth.appPassword=ci-app | \
             kubeconform \
               -strict \
               -summary \
