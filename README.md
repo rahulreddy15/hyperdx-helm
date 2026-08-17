@@ -358,7 +358,7 @@ must render cleanly.
 CI also runs a real-cluster test on kind (`.github/workflows/e2e.yaml`): fresh install →
 headless registration → OTLP send → row asserted in ClickHouse, plus a base-branch → PR
 upgrade asserting generated credentials survive. Run it against any local cluster with
-`hack/e2e.sh`. See [AGENTS.md](AGENTS.md) before making changes.
+`.github/scripts/e2e.sh`. See [AGENTS.md](AGENTS.md) before making changes.
 
 ## License
 

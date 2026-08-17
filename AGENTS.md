@@ -328,7 +328,7 @@ charts/hyperdx/          the chart
   templates/
   ci/                    values files exercised by CI render checks
 docs/                    design notes and runbooks
-hack/e2e.sh              real-cluster e2e (kind in CI, any kubectl context locally)
+.github/scripts/e2e.sh   real-cluster e2e (kind in CI, any kubectl context locally)
 .github/workflows/       lint/render, e2e on kind, upstream tracking, chart releases
 ```
 

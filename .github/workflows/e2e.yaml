@@ -12,7 +12,7 @@ name: e2e
 #             ingestion still works. Also implicitly guards the immutable
 #             Deployment/PDB selectors: a selector change makes the upgrade fail.
 #
-# Both drive hack/e2e.sh, which also runs against any local cluster.
+# Both drive .github/scripts/e2e.sh, which also runs against any local cluster.
 
 on:
   pull_request:
@@ -35,7 +35,7 @@ jobs:
           cluster_name: e2e
 
       - name: Run e2e (fresh install)
-        run: hack/e2e.sh
+        run: .github/scripts/e2e.sh
         env:
           E2E_TIMEOUT: 25m
 
@@ -58,7 +58,7 @@ jobs:
           cluster_name: e2e-upgrade
 
       - name: Run e2e (upgrade from base branch)
-        run: hack/e2e.sh
+        run: .github/scripts/e2e.sh
         env:
           E2E_UPGRADE_FROM_REF: origin/${{ github.base_ref || 'main' }}
           E2E_TIMEOUT: 25m

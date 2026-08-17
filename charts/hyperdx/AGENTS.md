@@ -177,6 +177,6 @@ charts/hyperdx` with no credentials is **expected to fail**: that is the P0-2 fi
 credential guard working, not a bug.
 
 For behaviour (not just rendering), run the real-cluster test against any kubectl
-context: `hack/e2e.sh` (fresh install + registration gate + auth matrix + ingest
+context: `.github/scripts/e2e.sh` (fresh install + registration gate + auth matrix + ingest
 assert), or with `E2E_UPGRADE_FROM_REF=origin/main` for the upgrade/credential-retention
 path. CI runs both on kind (`.github/workflows/e2e.yaml`).
