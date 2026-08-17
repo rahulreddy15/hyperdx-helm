@@ -3,6 +3,33 @@ entries:
   hyperdx:
   - apiVersion: v2
     appVersion: 2.35.0
+    created: "2026-08-17T15:19:23.05628323Z"
+    description: HyperDX (ClickStack) observability platform with operator-managed
+      ClickHouse and MongoDB
+    digest: e65ea2a7cc49ff9fa27d00327dabcb89b0479366778d318595650c8bbda51b59
+    icon: https://avatars.githubusercontent.com/u/130113031?v=4
+    keywords:
+    - observability
+    - opentelemetry
+    - clickhouse
+    - hyperdx
+    - clickstack
+    - tracing
+    - logs
+    kubeVersion: '>=1.27.0-0'
+    maintainers:
+    - name: rahulreddy15
+      url: https://github.com/rahulreddy15
+    name: hyperdx
+    sources:
+    - https://github.com/hyperdxio/hyperdx
+    - https://github.com/rahulreddy15/hyperdx-helm
+    type: application
+    urls:
+    - https://github.com/rahulreddy15/hyperdx-helm/releases/download/hyperdx-0.4.1/hyperdx-0.4.1.tgz
+    version: 0.4.1
+  - apiVersion: v2
+    appVersion: 2.35.0
     created: "2026-08-17T06:16:40.743353295Z"
     description: HyperDX (ClickStack) observability platform with operator-managed
       ClickHouse and MongoDB
@@ -109,4 +136,4 @@ entries:
     urls:
     - https://github.com/rahulreddy15/hyperdx-helm/releases/download/hyperdx-0.2.0/hyperdx-0.2.0.tgz
     version: 0.2.0
-generated: "2026-08-17T06:16:40.743369916Z"
+generated: "2026-08-17T15:19:23.056312214Z"
